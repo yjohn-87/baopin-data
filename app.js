@@ -85,6 +85,7 @@
   var tabs=[['trends','热门商品','按热度从高到低排，最火的在最上面。点「看详情」能看到数据来源。'],['prices','进货比价','把进价和闲鱼、得物卖价放在一起，看看一件大约赚多少。'],['signals','网上在聊','小红书、抖音、微博等平台上正在热议的相关内容，点开看原帖。'],['khm','海外行情','泰国、越南、柬埔寨的搜索趋势和美国亚马逊热卖，看海外能不能卖。']];
   function reviewCard() { var r=obj(data.review),bs=arr(r.bullets).filter(function (b) {return typeof b==='string'&&b.trim().length>0&&b.length<=80;}).slice(0,5),date=typeof r.date==='string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.date) : null;
     if(!bs.length)return '';
+    if(date){var parsed=new Date(Number(date[1]),Number(date[2])-1,Number(date[3]));if(parsed.getFullYear()!==Number(date[1])||parsed.getMonth()+1!==Number(date[2])||parsed.getDate()!==Number(date[3]))date=null;}
     return '<section class="review-card"><h2>今日选品点评 '+(date?'<small>'+Number(date[2])+'月'+Number(date[3])+'日</small>':'')+'</h2><ul>'+bs.map(function (b) {return '<li>'+esc(b)+'</li>';}).join('')+'</ul><p>'+esc(typeof r.note==='string'?r.note:'AI 根据今天数据写的，仅供参考')+'</p></section>';
   }
   function renderContent() { var rows=arr(data.trends).filter(function (p) {return p&&typeof p==='object'&&!Array.isArray(p);}),html='';
