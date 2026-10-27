@@ -13,7 +13,7 @@
   function read(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
   function save(k,v) { try { localStorage.setItem(k,v); } catch (e) {} }
   function el(k) { return document.getElementById(k); }
-  function url(v) { return typeof v === 'string' && /^https?:\/\/[^\s]+$/i.test(v) ? v : ''; }
+  function url(v) { if(typeof v!=='string'||!/^https:\/\//.test(v)||/\s/.test(v))return '';try{var p=new URL(v),ep=/^(rss|atom|feed|feeds|api|graphql)$/,file=/\.(xml|json|rss|atom)$/,labels=p.hostname.toLowerCase().split('.'),ok=!!p.hostname,i,segs;for(i=0;i<labels.length;i++)if((i<labels.length-2&&ep.test(labels[i]))||/-api$/.test(labels[i]))ok=false;segs=decodeURIComponent(p.pathname).toLowerCase().replace(/\\/g,'/').split('/');for(i=0;i<segs.length;i++)if(ep.test(segs[i])||file.test(segs[i]))ok=false;p.searchParams.forEach(function(v,k){if(/^(format|output|alt)$/i.test(k)&&/^(json|xml|rss|atom)$/i.test(v))ok=false;});return ok?v:'';}catch(e){return '';} }
   function link(u,t) { return url(u) ? '<a href="'+esc(u)+'" target="_blank" rel="noopener noreferrer">'+esc(t || '去看看 ›')+'</a>' : ''; }
   function yuan(v) { return num(v) ? '¥'+String(Math.round(v*100)/100) : '暂无'; }
   function integer(v) { return String(Math.round(v)).replace(/\B(?=(\d{3})+(?!\d))/g, ','); }
@@ -95,12 +95,20 @@
     if(active==='signals')html=arr(data.signals).map(obj).map(function (p) {return '<article class="panel signal"><span class="pill">'+esc(plain(str(p.pl)))+'</span><p>'+esc(p.t)+'</p>'+(num(p.h)?'<p>热度 '+esc(count(p.h))+'</p>':'')+link(p.u,'看原帖 ›')+'</article>';}).join('');
     else if(active==='khm'){
       html=rows.filter(function (p) {return num(p.khm)&&p.khm>0;}).map(function (p) {return '<article class="panel compact">'+photo(p)+'<div><h2>'+esc(title(p))+'</h2><p>柬埔寨适合度 '+new Array(Math.max(1,Math.min(5,Math.round(p.khm)))+1).join('★')+'</p></div></article>';}).join('');
-      [['amazon_us','美国亚马逊热卖'],['google_th','泰国谷歌热搜'],['google_vn','越南谷歌热搜'],['google_kh','柬埔寨谷歌热搜']].forEach(function (x) {html+='<section class="panel"><h2>'+x[1]+'</h2>'+(arr(obj(data.overseas)[x[0]]).map(obj).map(function (r) {return '<p>'+esc(r.t)+(num(r.h)?' · 热度 '+esc(count(r.h)):'')+' '+link(r.u)+'</p>';}).join('')||'<p>暂无</p>')+'</section>';});
+      [['amazon_us','美国亚马逊热卖'],['google_th','泰国谷歌热搜'],['google_vn','越南谷歌热搜'],['google_kh','柬埔寨谷歌热搜']].forEach(function (x) {html+='<section class="panel"><h2>'+x[1]+'</h2>'+(arr(obj(data.overseas)[x[0]]).map(obj).map(function (r) {return '<p>'+esc(r.t)+(num(r.h)?' · 热度 '+esc(count(r.h)):'')+' '+link(r.u)+'</p>';}).join('')||'<p>暂无</p>')+(x[0].indexOf('google_')===0?'<p>'+link(obj(data.overseas_more)[x[0]]||'https://trends.google.com/trending?geo='+x[0].slice(-2).toUpperCase(),'在 Google Trends 看完整榜单 ›')+'</p>':'')+'</section>';});
     }else {displayedRows=rows;html+=rows.map(active==='prices'?comparison:card).join('');}
     el('list').innerHTML=html||'<p class="panel">暂无数据，稍后刷新看看。</p>';
   }
-  function render() { el('tabs').innerHTML=tabs.map(function (t) {return '<button data-tab="'+t[0]+'" aria-pressed="'+(active===t[0])+'" class="'+(active===t[0]?'active':'')+'">'+t[1]+'</button>';}).join('');var tab=tabs.filter(function (t) {return t[0]===active;})[0];el('content').innerHTML='<p class="explain">'+tab[2]+'</p><div id="list"></div>';renderContent();
-    var ap=obj(data.apify);el('footer').innerHTML='<details class="panel"><summary>这些数据从哪来？</summary><p>热度参考网上讨论、搜索变化、成交和二手市场。价格来自公开商品页；进货前请核实授权、质量和实际报价。</p><p>有照片的商品先展示，再按热度排列。照片不代表货源已获正品授权。</p></details><p>更新时间：'+esc(data.generated_at_label || data.generated_at)+'</p><p>Apify 本月用量 '+(num(ap.mtd_usd)?'$'+ap.mtd_usd.toFixed(4):'暂无')+' / $4.50 上限</p>';
+  function freshnessInfo() {
+    var stamp=Date.parse(data.collected_at || data.generated_at),hours=isNaN(stamp)?null:Math.max(0,Math.floor((Date.now()-stamp)/3600000));
+    var age=hours===null?'时间未知':hours>=48?Math.floor(hours/24)+' 天前':hours+' 小时前';
+    var names={douyin_hot:'抖音',douyin_video:'抖音',weibo_hot:'微博',xhs_hot:'小红书',baidu_hot:'百度',kuaishou_hot:'快手'},seen={},sources=[];
+    arr(data.stale_sources).forEach(function (key) {var name=names[key];if(name&&!seen[name]){seen[name]=true;sources.push(name);}});
+    var extra=sources.length?'<small>部分来源暂时没更新：'+esc(sources.join('、'))+'</small>':'';
+    return {age:age,banner:hours!==null&&hours>=6?'<aside class="staleness-warning" role="status">⚠️ 数据更新于 '+esc(age)+'，可能不是最新'+extra+'</aside>':extra?'<p class="stale-sources">'+extra+'</p>':''};
+  }
+  function render() { el('tabs').innerHTML=tabs.map(function (t) {return '<button data-tab="'+t[0]+'" aria-pressed="'+(active===t[0])+'" class="'+(active===t[0]?'active':'')+'">'+t[1]+'</button>';}).join('');var tab=tabs.filter(function (t) {return t[0]===active;})[0];el('content').innerHTML=freshnessInfo().banner+'<p class="explain">'+tab[2]+'</p><div id="list"></div>';renderContent();
+    var ap=obj(data.apify);el('footer').innerHTML='<details class="panel"><summary>这些数据从哪来？</summary><p>热度参考网上讨论、搜索变化、成交和二手市场。价格来自公开商品页；进货前请核实授权、质量和实际报价。</p><p>有照片的商品先展示，再按热度排列。照片不代表货源已获正品授权。</p></details><p>数据更新于 '+esc(freshnessInfo().age)+'</p><p>Apify 本月用量 '+(num(ap.mtd_usd)?'$'+ap.mtd_usd.toFixed(4):'暂无')+' / $4.50 上限</p>';
   }
   Object.keys(defaults).forEach(function (k) {var n=Number(settings[k]);settings[k]=settings[k]!==null&&settings[k]!==''&&isFinite(n)&&n>=0?n:defaults[k];});
   document.addEventListener('click',function (e) {var n=e.target;while(n&&n!==document){if(n.tagName==='A')return;if(n.hasAttribute&&n.hasAttribute('data-tab')){active=n.getAttribute('data-tab');render();return;}if(n.hasAttribute&&n.hasAttribute('data-more')){var open=n.getAttribute('aria-expanded')!=='true';n.setAttribute('aria-expanded',String(open));n.textContent=open?'收起详情 ▴':'看详情 ▾';n.nextElementSibling.hidden=!open;return;}if(n.id==='refresh'){load();return;}if(n.id==='reset'){settings={ship:15,kg:0.3,mult:2.5};save('baopin_h5_settings',JSON.stringify(settings));renderContent();return;}n=n.parentNode;} });
