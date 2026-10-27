@@ -83,8 +83,13 @@
   }
   function settingsPanel() { return '<section class="panel settings"><h2>利润怎么算（可以改）</h2><p>一件大约赚 = 卖价 − 进价 − 运费。有闲鱼/得物卖价就用它，没有就按「进价 × 倍数」估。下面三个数是假设值，改了会马上重算。</p>'+[['ship','运费（每公斤多少钱）'],['kg','每件重量（公斤）'],['mult','卖价是进价的几倍']].map(function (x) {return '<label>'+x[1]+'<input type="number" min="0" step="any" data-setting="'+x[0]+'" value="'+settings[x[0]]+'"></label>';}).join('')+'<button id="reset">恢复默认</button></section>'; }
   var tabs=[['trends','热门商品','按热度从高到低排，最火的在最上面。点「看详情」能看到数据来源。'],['prices','进货比价','把进价和闲鱼、得物卖价放在一起，看看一件大约赚多少。'],['signals','网上在聊','小红书、抖音、微博等平台上正在热议的相关内容，点开看原帖。'],['khm','海外行情','泰国、越南、柬埔寨的搜索趋势和美国亚马逊热卖，看海外能不能卖。']];
+  function reviewCard() { var r=obj(data.review),bs=arr(r.bullets).filter(function (b) {return typeof b==='string'&&b.trim().length>0&&b.length<=80;}).slice(0,5),date=typeof r.date==='string' ? /^(\d{4})-(\d{2})-(\d{2})$/.exec(r.date) : null;
+    if(!bs.length)return '';
+    return '<section class="review-card"><h2>今日选品点评 '+(date?'<small>'+Number(date[2])+'月'+Number(date[3])+'日</small>':'')+'</h2><ul>'+bs.map(function (b) {return '<li>'+esc(b)+'</li>';}).join('')+'</ul><p>'+esc(typeof r.note==='string'?r.note:'AI 根据今天数据写的，仅供参考')+'</p></section>';
+  }
   function renderContent() { var rows=arr(data.trends).filter(function (p) {return p&&typeof p==='object'&&!Array.isArray(p);}),html='';
     rows.sort(function (a,b) {return (path(b)?1:0)-(path(a)?1:0)||(num(b.sc)?b.sc:0)-(num(a.sc)?a.sc:0);});
+    if(active==='trends')html=reviewCard();
     if(active==='prices'){html=settingsPanel();rows=rows.filter(function (p) {return cost(p)!==null||num(obj(p.dw).ask)||num(obj(p.xy).med);});}
     if(active==='signals')html=arr(data.signals).map(obj).map(function (p) {return '<article class="panel signal"><span class="pill">'+esc(plain(str(p.pl)))+'</span><p>'+esc(p.t)+'</p>'+(num(p.h)?'<p>热度 '+esc(count(p.h))+'</p>':'')+link(p.u,'看原帖 ›')+'</article>';}).join('');
     else if(active==='khm'){
