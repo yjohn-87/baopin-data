@@ -508,9 +508,9 @@
     var k = url(r.u) ? regAdd(r, str(it.name), it.at) : null;
     var tn = arr(r.tn).map(function (t) { return '≥' + t[0] + ' ' + yuan(t[1]); });
     return '<li class="supplier' + (picked ? ' picked' : '') + '">' +
-      '<div class="sup-head"><b>' + (i + 1) + '. ' + esc(typeof r.shop === 'string' && r.shop ? r.shop : '店铺名未取到') + '</b>' + (picked ? '<span class="pill tiny buy">推荐</span>' : '') + (num(r.ss) ? '<span class="tag">供应商分 ' + r.ss + '</span>' : '') + '</div>' +
+      '<div class="sup-head"><b>' + (i + 1) + '. ' + esc(typeof r.shop === 'string' && r.shop ? r.shop : '店铺名未取到') + '</b>' + (picked ? '<span class="pill tiny buy">推荐</span>' : '') + (num(r.rs) ? '<span class="tag" title="综合分：100件价×0.5 + 可靠度×0.3 + 起订量×0.1 + 发货地×0.1">综合分 ' + Math.round(r.rs) + '</span>' : num(r.ss) ? '<span class="tag">供应商分 ' + r.ss + '</span>' : '') + '</div>' +
       '<p class="sup-title">' + esc(str(r.t)) + '</p>' +
-      '<dl class="sup-grid"><div><dt>单价</dt><dd>' + (num(r.p) ? yuan(r.p) : '未取到') + '</dd></div><div><dt>起订量</dt><dd>' + (num(r.mq) ? r.mq + ' 件' : '未取到') + '</dd></div><div><dt>发货地</dt><dd>' + esc(typeof r.loc === 'string' && r.loc ? r.loc : '未取到') + '</dd></div><div><dt>回头率</dt><dd>' + (num(r.rep) ? pct(r.rep) : '未取到') + '</dd></div></dl>' +
+      '<dl class="sup-grid"><div><dt>' + (num(r.p100) ? '100件价' : '单价') + '</dt><dd>' + (num(r.p100) ? yuan(r.p100) : num(r.p) ? yuan(r.p) : '未取到') + '</dd></div><div><dt>起订量</dt><dd>' + (num(r.mq) ? r.mq + ' 件' : '未取到') + '</dd></div><div><dt>发货地</dt><dd>' + esc(typeof r.loc === 'string' && r.loc ? r.loc : '未取到') + '</dd></div><div><dt>回头率</dt><dd>' + (num(r.rep) ? pct(r.rep) : '未取到') + '</dd></div></dl>' +
       (tn.length ? '<p class="sup-tiers">阶梯价：' + esc(tn.join(' / ')) + '</p>' : '') +
       (arr(r.tags).length ? '<p class="sup-tiers">' + esc(arr(r.tags).join(' · ')) + '</p>' : '') +
       (it.ip ? '<p class="sup-flag">⚠️ 未核实正品授权，仅供比价</p>' : '') +
@@ -529,6 +529,7 @@
       (it.odd ? '<p class="risk-warning">1688 搜到的多是配件/仿款或价差离谱，倍数不可信，别按这个进。</p>' : '') +
       '<p class="muted small">卖价来源：' + esc(str(it.sell_src)) + (it.kind === 'case' ? '；倍数只算空壳，未含印图、包装、国际运费' : '') + '。分项：利润 ' + pt.mult + ' · 热度 ' + (num(pt.heat) ? pt.heat : '无') + ' · 供应商 ' + pt.sup + ' · 起订 ' + pt.moq + '</p>' +
       (typeof pk.why === 'string' ? '<p class="sup-pick' + (it.ip ? ' warn' : '') + '">' + esc(pk.why) + '</p>' : '') +
+      (num(pk.raw) && num(pk.n) ? '<p class="muted small">从 ' + pk.raw + ' 条 1688 结果里过滤出 ' + pk.n + ' 家合格候选（' + esc(Object.keys(obj(pk.drop)).map(function (k) { return k + ' ' + pk.drop[k]; }).join('、')) + '），按综合分排序；备选见「看其他」。</p>' : '') +
       '<ol class="supplier-list">' + (rows.length ? jhSupplier(best, pi, true, it) : '') + '</ol>' +
       (others.length ? '<button class="more-toggle" data-more aria-expanded="false">看其他 ' + others.length + ' 家 ▾</button><div class="more" hidden><ol class="supplier-list">' + others.map(function (r) { return jhSupplier(r, rows.indexOf(r), false, it); }).join('') + '</ol></div>' : '') +
       '<p class="sup-meta">来源：' + esc(str(it.src)) + ' · 价格以 1688 页面为准' + (url(it.more) ? ' ' + link(it.more, '看更多货源 ›') : '') + '</p></div></article>';
