@@ -228,7 +228,46 @@
     if (num(x.med)) cell('闲鱼卖', yuan(x.med));
     if (num(d.ask)) cell('得物最低', yuan(d.ask));
     var buyLink = link(url(obj(p.cost).u) || (basis(p) === '速卖通' ? url(a.u) : (url(s.u) || url(p.su) || url(p.s1688))), '去进货 ›', 'buy-link');
-    return '<article class="panel comparison" data-item="' + i + '"><div class="compare-head">' + photo(p, 'compare-photo') + '<h2>' + esc(title(p)) + '</h2></div><dl class="mini-table">' + cells.join('') + '</dl>' + riskWarning(p) + profitBox(p) + buyLink + '</article>';
+    return '<article class="panel comparison" data-item="' + i + '"><div class="compare-head">' + photo(p, 'compare-photo') + '<h2>' + esc(title(p)) + '</h2></div><dl class="mini-table">' + cells.join('') + '</dl>' + riskWarning(p) + profitBox(p) + buyLink + sourcingToggle(p) + '</article>';
+  }
+
+  // 货源：1688 前几家供应商（只展示抓到的真实字段，缺的写「未取到」）。
+  function na(v) { return v === null || v === undefined || v === '' ? '未取到' : v; }
+  function supplierRow(r, i, picked) {
+    var tiers = arr(r.tiers).filter(function (t) { return Array.isArray(t) && t.length > 1 && num(t[1]); }).map(function (t) { return str(t[0]) + ' ' + yuan(t[1]); });
+    var tags = arr(r.tags).filter(function (t) { return typeof t === 'string' && t; });
+    function f(label, value) { return '<div><dt>' + label + '</dt><dd' + (value === '未取到' ? ' class="na"' : '') + '>' + esc(value) + '</dd></div>'; }
+    return '<li class="supplier' + (picked ? ' picked' : '') + '">' +
+      '<div class="sup-head"><b>' + (i + 1) + '. ' + esc(typeof r.shop === 'string' && r.shop ? r.shop : '店铺名未取到') + '</b>' + (picked ? '<span class="pill tiny buy">推荐</span>' : '') + '</div>' +
+      '<p class="sup-title">' + esc(str(r.t)) + '</p>' +
+      '<dl class="sup-grid">' +
+      f('单价', num(r.p) ? yuan(r.p) : '未取到') +
+      f('起批量', na(typeof r.moq === 'string' ? r.moq : '')) +
+      f('发货地', na(typeof r.loc === 'string' ? r.loc : '')) +
+      f('回头率', num(r.rep) ? pct(r.rep) : '未取到') +
+      f('商家', tags.length ? tags.join(' · ') : '未取到') +
+      f('销量', na(typeof r.sales === 'string' ? r.sales : '')) +
+      '</dl>' +
+      (tiers.length ? '<p class="sup-tiers">阶梯价：' + esc(tiers.join(' / ')) + '</p>' : '') +
+      (typeof r.flag === 'string' && r.flag ? '<p class="sup-flag">⚠️ ' + esc(r.flag) + '</p>' : '') +
+      link(r.u, '去 1688 看这家 ›', 'sup-link') + '</li>';
+  }
+  function sourcingBody(hy) {
+    var rows = arr(hy.rows).map(obj), pk = obj(hy.pick), pi = num(pk.i) ? pk.i : -1;
+    var d = typeof hy.at === 'string' && /^(\d{4})-(\d{2})-(\d{2})/.exec(hy.at);
+    return (typeof pk.why === 'string' && pk.why ? '<p class="sup-pick' + (hy.ip ? ' warn' : '') + '">' + esc(pk.why) + '</p>' : '') +
+      '<ol class="supplier-list">' + rows.map(function (r, i) { return supplierRow(r, i, i === pi); }).join('') + '</ol>' +
+      '<p class="sup-meta">来源：' + esc(str(hy.src)) + (d ? ' · 抓取于 ' + Number(d[2]) + '月' + Number(d[3]) + '日' : '') + ' · 价格以 1688 页面为准' + (url(hy.more) ? ' ' + link(hy.more, '看更多货源 ›') : '') + '</p>';
+  }
+  function sourcingToggle(p) {
+    var hy = obj(p.hy), n = arr(hy.rows).length;
+    return n ? '<button class="more-toggle sourcing-toggle" data-more aria-expanded="false">看货源（' + n + ' 家） ▾</button><div class="more sourcing" hidden>' + sourcingBody(hy) + '</div>' : '';
+  }
+  function extraSourcing() {
+    return arr(data.hy_extra).map(obj).filter(function (h) { return arr(h.rows).length; }).map(function (h) {
+      return '<article class="panel comparison sourcing-extra"><div class="compare-head"><div class="photo placeholder compare-photo">📱</div><h2>' + esc(str(h.name)) + ' 货源' + (typeof h.note === 'string' ? ' <small class="tag">' + esc(h.note) + '</small>' : '') + '</h2></div>' +
+        '<button class="more-toggle sourcing-toggle" data-more aria-expanded="true">收起货源（' + arr(h.rows).length + ' 家） ▴</button><div class="more sourcing">' + sourcingBody(h) + '</div></article>';
+    }).join('');
   }
 
   function settingsPanel() {
@@ -426,7 +465,7 @@
 
   var tabs = [
     ['picks', '推荐', '有图的商品先排，再按热度从高到低排。点「看详情」能看到数据来源；利润和授权有风险的会标红/黄提示，别只看绿色标签。'],
-    ['profit', '算利润', '把进价和闲鱼、得物卖价放在一起，看看一件大约能赚多少。'],
+    ['profit', '算利润', '把进价和闲鱼、得物卖价放在一起，看看一件大约能赚多少。点「看货源」看 1688 前几家供应商和推荐哪家。'],
     ['abroad', '海外机会', '泰国、越南、柬埔寨搜索的涨跌和数据够不够，再看看美国亚马逊在卖什么手机配件；点「看完整海外榜单」看全部。'],
     ['buzz', '全网热议', '小红书、抖音、微博等平台上正在热议的内容，点开看原帖。']
   ];
@@ -441,9 +480,9 @@
     var rows = sortedRows(), html = '';
     if (active === 'picks') { html = reviewCard(rows); displayedRows = rows; html += rows.map(card).join(''); }
     else if (active === 'profit') {
-      var priced = rows.filter(function (p) { return cost(p) !== null || num(obj(p.dw).ask) || num(obj(p.xy).med); });
+      var priced = rows.filter(function (p) { return cost(p) !== null || num(obj(p.dw).ask) || num(obj(p.xy).med) || arr(obj(p.hy).rows).length; });
       displayedRows = priced;
-      html = settingsPanel() + priced.map(comparison).join('');
+      html = extraSourcing() + settingsPanel() + priced.map(comparison).join('');
     } else if (active === 'abroad') {
       displayedRows = [];
       html = countrySection(rows, 'TH', '泰国', '🇹🇭') + countrySection(rows, 'VN', '越南', '🇻🇳') + countrySection(rows, 'KH', '柬埔寨', '🇰🇭') +

@@ -112,6 +112,26 @@ input { font: inherit; width: 90px; border: 1px solid #cfc8bb; border-radius: 9p
 .mini-table dd { margin: 2px 0 0; font-weight: 700; overflow-wrap: anywhere; font-size: 14px; }
 .buy-link { display: inline-block; margin-top: 4px; }
 
+/* 货源 (1688 suppliers) */
+.sourcing-toggle { margin-top: 10px; }
+.more.sourcing { padding-top: 8px; }
+.sup-pick { background: #e8f6ec; color: #1f6e46; border-radius: 10px; padding: 8px 12px; margin: 4px 0 10px; font-size: 14px; font-weight: 700; }
+.sup-pick.warn { background: #fff2cf; color: #8a5a06; }
+.supplier-list { list-style: none; padding: 0; margin: 0; }
+.supplier { border: 1px solid #ece6d9; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; background: #fffdf9; }
+.supplier.picked { border-color: #bad6bf; background: #f6fbf7; box-shadow: 0 2px 0 #dcefe1; }
+.sup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14.5px; overflow-wrap: anywhere; }
+.sup-title { margin: 4px 0 8px; font-size: 13px; color: #6c6657; overflow-wrap: anywhere; }
+.sup-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; margin: 0; }
+.sup-grid dt { color: #837c6c; font-size: 12px; }
+.sup-grid dd { margin: 1px 0 0; font-weight: 700; font-size: 13.5px; overflow-wrap: anywhere; }
+.sup-grid dd.na { color: #a39c8c; font-weight: 500; }
+.sup-tiers { margin: 8px 0 0; font-size: 12.5px; color: #4a4d44; }
+.sup-flag { margin: 6px 0 0; font-size: 12.5px; font-weight: 700; color: #8a5a06; }
+.sup-link { display: inline-block; margin-top: 6px; font-size: 14px; }
+.sup-meta { font-size: 12px; color: #8a8375; margin: 2px 0 6px; }
+.sourcing-extra h2 small { font-size: 11.5px; vertical-align: middle; margin-left: 4px; }
+
 /* abroad tab */
 .group-title { font-size: 14px; color: #a06c38; margin: 18px 4px 10px; font-weight: 700; }
 .group-title:first-child { margin-top: 2px; }
