@@ -31,35 +31,39 @@
     function okUrl(u) { return typeof u === 'string' && /^https:\/\/[^\s"]+$/.test(u) ? u : ''; }
     function yuan(v) { return num(v) ? '¥' + Math.round(v * 100) / 100 : ''; }
     function range(a, b) { return num(a) ? yuan(a) + (num(b) && b !== a ? '–' + Math.round(b * 100) / 100 : '') : ''; }
-    function iph(m) { m = arr(m); return m.length ? 'iPhone ' + m[0] + (m[1] !== m[0] ? '–' + m[1] : '') : '机型看商品页'; }
+    function iph(m) { m = arr(m); return m.length ? 'iPhone ' + m[0] + (m[1] !== m[0] ? '–' + m[1] : '') : ''; }
+    function offer(o) { return /^\d+$/.test(str(o)) ? 'https://detail.1688.com/offer/' + o + '.html' : ''; }
+    function home(m) { return /^[a-zA-Z0-9_-]+$/.test(str(m)) ? 'https://m.1688.com/winport/' + m + '.html' : ''; }
     function city(l) { return str(l).replace(/^(广东|浙江|福建|江苏)(省)?/, '').replace(/(市|县)$/, ''); }
     function a(u, t, cls) { return okUrl(u) ? '<a class="' + cls + '" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + t + '</a>' : ''; }
     function S() { return obj(obj(data.jh).suppliers); }
     function buyRow(b, first) {
       b = obj(b);
       var im = /^img\/ibank\/[^"'<>]+$/.test(str(b.im)) ? '<img src="https://cbu01.alicdn.com/' + esc(b.im) + '_120x120.jpg" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<span class="v-ph">📱</span>';
-      return '<div class="v-buy' + (first ? ' first' : '') + '">' + im + '<div class="v-bt"><p class="v-btitle">' + esc(b.t) + '</p><p class="v-bp"><b>' + yuan(b.p) + '</b> / 个' + (num(b.q) ? ' · ' + b.q + ' 件起' : '') + ' · ' + esc(iph(b.m)) + '</p></div></div>' +
-        a(b.u, first ? '去 1688 下单' : '下这款', first ? 's-buy' : 'v-buy2');
+      return '<div class="v-buy' + (first ? ' first' : '') + '">' + im + '<div class="v-bt"><p class="v-btitle">' + esc(b.t) + '</p><p class="v-bp"><b>' + yuan(b.p) + '</b> / 个' + (num(b.q) ? ' · ' + b.q + ' 件起' : '') + '</p></div></div>' +
+        a(offer(b.o), first ? '去 1688 下单' : '下这款', first ? 's-buy' : 'v-buy2');
     }
     function card(s, i, label) {
       var buys = arr(s.buy).map(obj);
       return '<article class="s-card v-card"><div class="s-body">' +
         '<div class="v-head"><span class="v-rank">' + (i + 1) + '</span><h2>' + esc(s.shop) + '</h2></div>' +
-        '<p class="v-meta">' + (s.factory ? '<span class="v-tag">工厂</span>' : '') + esc(city(s.loc)) + '发货 · ' + esc(iph(s.models)) + '</p>' +
-        '<p class="v-what">进 <b>' + esc(label) + '</b>：' + range(s.pmin, s.pmax) + ' / 个' + (num(s.moq) ? '，' + s.moq + ' 件起批' : '') + '</p>' +
+        '<p class="v-meta">' + (s.factory ? '<span class="v-tag">工厂</span>' : '') + esc(city(s.loc)) + '发货' + (iph(s.models) ? ' · ' + esc(iph(s.models)) : '') + '</p>' +
+        '<p class="v-what"><b>' + esc(label) + '</b>：' + range(s.pmin, s.pmax) + ' / 个' + (num(s.moq) ? '，' + s.moq + ' 件起批' : '') + '</p>' +
         '<p class="v-strong">' + esc(arr(s.strong).join(' · ')) + '</p>' +
         (buys.length ? buyRow(buys[0], true) : '') +
         (buys[1] ? '<details class="s-other"><summary>这家还有一款</summary>' + buyRow(buys[1], false) + '</details>' : '') +
-        a(s.home, '看厂家店铺 ›', 'v-home') +
+        a(home(s.mid), '看厂家店铺 ›', 'v-home') +
         '</div></article>';
     }
     function render() {
       var ts = arr(S().types).map(obj), shop = obj(S().shop), tn = obj(shop.types);
-      el('sum').textContent = '按你店里 ' + (shop.total || '') + ' 个商品的壳型，每类挑了最值得进的 1688 厂家，点按钮直接到商品页下单';
-      el('chips').innerHTML = [['', '全部']].concat(ts.map(function (t) { return [t.type, t.label + ' ' + (t.mine || 0)]; })).map(function (c) { return '<button data-vtype="' + esc(c[0]) + '" class="' + (type === c[0] ? 'on' : '') + '">' + esc(c[1]) + '</button>'; }).join('');
-      el('list').innerHTML = ts.filter(function (t) { return !type || t.type === type; }).map(function (t) {
+      el('sum').textContent = '手机壳 ' + ts.filter(function (t) { return t.group === '壳'; }).length + ' 类、配件 ' + ts.filter(function (t) { return t.group === '配件'; }).length + ' 类，每类挑了最值得进的 1688 厂家，点按钮直接到商品页下单';
+      function chip(v, t) { return '<button data-vtype="' + esc(v) + '" class="' + (type === v ? 'on' : '') + '">' + esc(t) + '</button>'; }
+      el('chips').innerHTML = '<div class="v-row"><span class="v-gl">手机壳</span>' + chip('', '全部') + chip('壳', '全部手机壳') + ts.filter(function (t) { return t.group === '壳'; }).map(function (t) { return chip(t.type, t.label); }).join('') + '</div>' +
+        '<div class="v-row"><span class="v-gl">配件</span>' + chip('配件', '全部配件') + ts.filter(function (t) { return t.group === '配件'; }).map(function (t) { return chip(t.type, t.label); }).join('') + '</div>';
+      el('list').innerHTML = ts.filter(function (t) { return !type || t.type === type || t.group === type; }).map(function (t) {
         var top = arr(t.top).map(obj);
-        return '<section class="v-sec"><h2 class="v-sech">' + esc(t.label) + '<small>你店里 ' + (t.mine || 0) + ' 个 · 比了 ' + (t.cands || 0) + ' 家</small></h2>' +
+        return '<section class="v-sec"><h2 class="v-sech">' + esc(t.label) + '<small>' + (t.mine ? '你店里 ' + t.mine + ' 个 · ' : '') + '比了 ' + (t.cands || 0) + ' 家</small></h2>' +
           '<div class="s-grid v-grid">' + (top.map(function (s, i) { return card(s, i, t.label); }).join('') || '<p class="s-todo">还没找到合适的厂家</p>') + '</div></section>';
       }).join('');
       var ms = arr(shop.models).slice(0, 6).map(function (m) { return str(arr(m)[0]) + ' ' + arr(m)[1]; });
