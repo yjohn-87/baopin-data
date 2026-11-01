@@ -487,7 +487,10 @@
     if (filters.moq10 && !(num(it.moq) && it.moq <= 10)) return false;
     return matchText([str(it.name), str(it.cat)].concat(arr(it.rows).map(function (r) { return str(obj(r).shop) + ' ' + str(obj(r).t); })));
   }
-  function toolbar(cats, showSort, searchOnly) {
+  var sideHtml = '', drawerOpen = false;
+  function wide() { return window.matchMedia && window.matchMedia('(min-width: 1024px)').matches; }
+  function toolbar(cats, showSort, searchOnly) { sideHtml = toolbarHtml(cats, showSort, searchOnly); return ''; }
+  function toolbarHtml(cats, showSort, searchOnly) {
     var opts = ['<option value="">全部品类</option>'].concat(cats.map(function (c) { return '<option' + (filters.cat === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }));
     function chip(k, t) { return '<button class="fchip' + (filters[k] ? ' on' : '') + '" data-filter="' + k + '" aria-pressed="' + filters[k] + '">' + t + '</button>'; }
     return '<div class="toolbar"><input id="q" type="search" placeholder="' + (searchOnly ? '搜机型、图案名…' : '搜商品、店铺…') + '" value="' + esc(filters.q) + '" aria-label="搜索">' + (searchOnly ? '</div>' :
@@ -630,8 +633,10 @@
     return rows;
   }
 
+  function renderDrawer() { var d = el('drawer'); if (!d) return; d.hidden = !drawerOpen; document.body.classList.toggle('drawer-open', drawerOpen); if (drawerOpen) el('drawerBody').innerHTML = cartView(); }
+  function refreshCart() { if (drawerOpen) renderDrawer(); if (active === 'cart') renderContent(); }
   function renderContent() {
-    var rows = sortedRows(), html = '';
+    var rows = sortedRows(), html = ''; sideHtml = '';
     if (active === 'jh') { displayedRows = []; html = jhView(); }
     else if (active === 'shop') { displayedRows = []; html = shopView(); }
     else if (active === 'cart') { displayedRows = []; html = cartView(); }
@@ -644,6 +649,8 @@
         '<h3 class="group-title">美国亚马逊热卖手机配件</h3>' + amazonList() + overseasFullSection() + '</div>';
     } else if (active === 'buzz') { displayedRows = []; html = buzzView(); }
     el('list').innerHTML = html || '<p class="panel">暂无数据，稍后刷新看看。</p>';
+    var side = el('side'); if (side) { side.innerHTML = sideHtml; side.hidden = !sideHtml; }
+    document.body.classList.toggle('has-side', !!sideHtml);
   }
 
   function freshnessInfo() {
@@ -677,10 +684,11 @@
     var n = e.target;
     while (n && n !== document) {
       if (n.tagName === 'A') return;
-      if (n.hasAttribute && n.hasAttribute('data-tab')) { active = n.getAttribute('data-tab'); render(); window.scrollTo(0, 0); return; }
+      if (n.hasAttribute && n.hasAttribute('data-tab')) { drawerOpen = false; renderDrawer(); active = n.getAttribute('data-tab'); render(); window.scrollTo(0, 0); return; }
       if (n.hasAttribute && n.hasAttribute('data-more')) { setMoreOpen(n, n.getAttribute('aria-expanded') !== 'true'); return; }
       if (n.id === 'refresh') { load(); return; }
-      if (n.id === 'cartBtn') { active = 'cart'; render(); window.scrollTo(0, 0); return; }
+      if (n.id === 'cartBtn') { if (wide()) { drawerOpen = true; renderDrawer(); var dc = el('dwClose'); if (dc) dc.focus(); } else { active = 'cart'; render(); window.scrollTo(0, 0); } return; }
+      if (n.id === 'dwClose' || (n.hasAttribute && n.hasAttribute('data-close'))) { drawerOpen = false; renderDrawer(); return; }
       if (n.hasAttribute && n.hasAttribute('data-fold')) { var fk = n.getAttribute('data-fold'); folded[fk] = !folded[fk]; var art = n.parentNode, body = art.querySelector('.body'); if (body) body.hidden = folded[fk]; art.classList.toggle('folded', folded[fk]); n.setAttribute('aria-expanded', String(!folded[fk])); var ca = n.querySelector('.caret'); if (ca) ca.textContent = folded[fk] ? '▾' : '▴'; return; }
       if (n.hasAttribute && n.hasAttribute('data-filter')) { var fkey = n.getAttribute('data-filter'); filters[fkey] = !filters[fkey]; renderContent(); return; }
       if (n.hasAttribute && n.hasAttribute('data-add')) {
@@ -693,8 +701,8 @@
         }
         return;
       }
-      if (n.hasAttribute && n.hasAttribute('data-del')) { cart.splice(Number(n.getAttribute('data-del')), 1); saveCart(); renderContent(); return; }
-      if (n.id === 'clearCart') { if (window.confirm('清空进货单？')) { cart = []; saveCart(); renderContent(); } return; }
+      if (n.hasAttribute && n.hasAttribute('data-del')) { cart.splice(Number(n.getAttribute('data-del')), 1); saveCart(); refreshCart(); return; }
+      if (n.id === 'clearCart') { if (window.confirm('清空进货单？')) { cart = []; saveCart(); refreshCart(); } return; }
       if (n.id === 'copyCart') { copyText(cartText()); return; }
       if (n.id === 'csvCart') { var blob = new Blob([cartCsv()], { type: 'text/csv;charset=utf-8' }), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '进货单-' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 500); return; }
       if (n.id === 'reset') { settings = { ship: 15, kg: 0.3, mult: 2.5 }; save('baopin_v5_settings', JSON.stringify(settings)); renderContent(); return; }
@@ -704,7 +712,7 @@
   var qTimer = null;
   document.addEventListener('input', function (e) {
     if (e.target.id === 'q') { filters.q = e.target.value; clearTimeout(qTimer); qTimer = setTimeout(function () { renderContent(); var qi = el('q'); if (qi) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); } }, 250); return; }
-    if (e.target.hasAttribute('data-cartqty')) { var ci = Number(e.target.getAttribute('data-cartqty')), cq = Math.round(Number(e.target.value)); if (cart[ci] && cq >= 1) { cart[ci].qty = cq; saveCart(); clearTimeout(qTimer); qTimer = setTimeout(function () { renderContent(); var f = el('list').querySelector('[data-cartqty="' + ci + '"]'); if (f) { f.focus(); } }, 400); } return; }
+    if (e.target.hasAttribute('data-cartqty')) { var ci = Number(e.target.getAttribute('data-cartqty')), cq = Math.round(Number(e.target.value)); if (cart[ci] && cq >= 1) { cart[ci].qty = cq; saveCart(); clearTimeout(qTimer); qTimer = setTimeout(function () { refreshCart(); var f = document.querySelector('[data-cartqty="' + ci + '"]'); if (f) { f.focus(); } }, 400); } return; }
     var k = e.target.getAttribute('data-setting'), v = Number(e.target.value);
     if (!Object.prototype.hasOwnProperty.call(defaults, k)) return;
     if (e.target.value !== '' && isFinite(v) && v >= 0) {
@@ -726,6 +734,8 @@
       if (notice) notice.outerHTML = reviewAssumptionsNotice(obj(data.review), displayedRows);
     }
   });
+  document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && drawerOpen) { drawerOpen = false; renderDrawer(); } });
+  window.addEventListener('resize', function () { if (drawerOpen && !wide()) { drawerOpen = false; renderDrawer(); active = 'cart'; render(); } });
   document.addEventListener('change', function (e) {
     if (e.target.id === 'fcat') { filters.cat = e.target.value; renderContent(); }
     if (e.target.id === 'sort') { sortBy = e.target.value; renderContent(); }
