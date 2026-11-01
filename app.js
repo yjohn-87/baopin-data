@@ -2,7 +2,7 @@
   'use strict';
   // Verdict thresholds: hot >=40; buy >=25 OR >=15 with premium >=10% / daily wants >=100.
   var RULES = { hot: 40, buy: 25, emerging: 15, premium: 0.10, dailyWant: 100 };
-  var data = {}, displayedRows = [], active = 'picks', defaults = { ship: 15, kg: 0.3, mult: 2.5 };
+  var data = {}, displayedRows = [], active = 'jh', defaults = { ship: 15, kg: 0.3, mult: 2.5 };
   var settings = obj(parse(read('baopin_v5_settings')));
   // Migrate v4's saved settings once: v5 key is empty but the old key has usable numbers.
   if (!read('baopin_v5_settings')) {
@@ -463,12 +463,166 @@
     return html || '<p class="muted">暂无数据。</p>';
   }
 
+  // ===== v5「1688 值得进货」: 进货 / 我的店铺 / 进货单（只存本机浏览器，不代付、不碰 1688 登录） =====
+  var CART_KEY = 'baopin_jh_cart', cart = arr(parse(read(CART_KEY))).filter(function (x) { return x && typeof x === 'object' && url(x.u); });
+  var filters = { q: '', cat: '', has: false, m3: false, moq10: false }, sortBy = 'mult', folded = {};
+  function jh() { return obj(data.jh); }
+  function jhItems() { return arr(jh().items).map(obj); }
+  function jhById(id) { return jhItems().filter(function (it) { return it.key === id; })[0] || null; }
+  function times(v) { return num(v) ? '×' + (v >= 10 ? Math.round(v) : Math.round(v * 10) / 10) : '暂无'; }
+  function day(s) { var d = typeof s === 'string' && /^(\d{4})-(\d{2})-(\d{2})/.exec(s); return d ? Number(d[2]) + '月' + Number(d[3]) + '日' : '时间未知'; }
+  function tierPrice(tn, q) {
+    tn = arr(tn).filter(function (t) { return Array.isArray(t) && num(t[0]) && num(t[1]); });
+    if (!tn.length) return null;
+    var p = tn[0][1]; tn.forEach(function (t) { if (q >= t[0]) p = t[1]; });
+    return p;
+  }
+  function saveCart() { save(CART_KEY, JSON.stringify(cart)); var b = el('cartBtn'); if (b) b.innerHTML = '🧾 进货单' + (cart.length ? '<b>' + cart.length + '</b>' : ''); }
+  function riskChip(label, r) { r = arr(r); var lv = str(r[0]); return '<span class="chip lv-' + (lv === '高' ? 'hi' : lv === '中' ? 'mid' : 'lo') + '" title="' + esc(str(r[1])) + '">' + label + ' ' + esc(lv) + '</span>'; }
+  function matchText(parts) { var q = filters.q.trim().toLowerCase(); return !q || parts.join(' ').toLowerCase().indexOf(q) >= 0; }
+  function passJh(it) {
+    if (filters.cat && it.cat !== filters.cat) return false;
+    if (filters.has && !arr(it.rows).length) return false;
+    if (filters.m3 && !(num(it.mult) && it.mult >= 3 && !it.odd)) return false;
+    if (filters.moq10 && !(num(it.moq) && it.moq <= 10)) return false;
+    return matchText([str(it.name), str(it.cat)].concat(arr(it.rows).map(function (r) { return str(obj(r).shop) + ' ' + str(obj(r).t); })));
+  }
+  function toolbar(cats, showSort, searchOnly) {
+    var opts = ['<option value="">全部品类</option>'].concat(cats.map(function (c) { return '<option' + (filters.cat === c ? ' selected' : '') + '>' + esc(c) + '</option>'; }));
+    function chip(k, t) { return '<button class="fchip' + (filters[k] ? ' on' : '') + '" data-filter="' + k + '" aria-pressed="' + filters[k] + '">' + t + '</button>'; }
+    return '<div class="toolbar"><input id="q" type="search" placeholder="' + (searchOnly ? '搜机型、图案名…' : '搜商品、店铺…') + '" value="' + esc(filters.q) + '" aria-label="搜索">' + (searchOnly ? '</div>' :
+      '<div class="frow"><select id="fcat" aria-label="品类">' + opts.join('') + '</select>' + chip('has', '有货源') + chip('m3', '利润>3倍') + chip('moq10', '起订≤10') +
+      (showSort ? '<select id="sort" aria-label="排序">' + [['mult', '按利润倍数'], ['score', '按进货分'], ['heat', '按热度'], ['total', '起订总价低']].map(function (o) { return '<option value="' + o[0] + '"' + (sortBy === o[0] ? ' selected' : '') + '>' + o[1] + '</option>'; }).join('') + '</select>' : '') + '</div></div>');
+  }
+  function qtyBox(key, moq) { return '<span class="addbox"><input type="number" min="1" step="1" inputmode="numeric" value="' + (num(moq) && moq > 0 ? moq : 1) + '" data-qty="' + esc(key) + '" aria-label="数量"><button class="add" data-add="' + esc(key) + '">＋进货单</button></span>'; }
+  var addable = {};
+  function regAdd(r, srcName, at) {
+    var k = 'a' + Object.keys(addable).length;
+    addable[k] = { u: r.u, shop: typeof r.shop === 'string' && r.shop ? r.shop : '店铺名未取到', t: str(r.t).slice(0, 60), tn: arr(r.tn), moq: num(r.mq) ? r.mq : num(r.moq) ? r.moq : null, src: srcName, at: at || null, loc: typeof r.loc === 'string' ? r.loc : null };
+    return k;
+  }
+  function jhSupplier(r, i, picked, it) {
+    var k = url(r.u) ? regAdd(r, str(it.name), it.at) : null;
+    var tn = arr(r.tn).map(function (t) { return '≥' + t[0] + ' ' + yuan(t[1]); });
+    return '<li class="supplier' + (picked ? ' picked' : '') + '">' +
+      '<div class="sup-head"><b>' + (i + 1) + '. ' + esc(typeof r.shop === 'string' && r.shop ? r.shop : '店铺名未取到') + '</b>' + (picked ? '<span class="pill tiny buy">推荐</span>' : '') + (num(r.ss) ? '<span class="tag">供应商分 ' + r.ss + '</span>' : '') + '</div>' +
+      '<p class="sup-title">' + esc(str(r.t)) + '</p>' +
+      '<dl class="sup-grid"><div><dt>单价</dt><dd>' + (num(r.p) ? yuan(r.p) : '未取到') + '</dd></div><div><dt>起订量</dt><dd>' + (num(r.mq) ? r.mq + ' 件' : '未取到') + '</dd></div><div><dt>发货地</dt><dd>' + esc(typeof r.loc === 'string' && r.loc ? r.loc : '未取到') + '</dd></div><div><dt>回头率</dt><dd>' + (num(r.rep) ? pct(r.rep) : '未取到') + '</dd></div></dl>' +
+      (tn.length ? '<p class="sup-tiers">阶梯价：' + esc(tn.join(' / ')) + '</p>' : '') +
+      (arr(r.tags).length ? '<p class="sup-tiers">' + esc(arr(r.tags).join(' · ')) + '</p>' : '') +
+      (it.ip ? '<p class="sup-flag">⚠️ 未核实正品授权，仅供比价</p>' : '') +
+      '<div class="sup-actions">' + (k ? qtyBox(k, r.mq) : '') + link(r.u, '去 1688 看 ›', 'sup-link') + '</div></li>';
+  }
+  function jhCard(it) {
+    var rows = arr(it.rows).map(obj), pk = obj(it.pick), pi = num(pk.i) && pk.i < rows.length ? pk.i : 0, best = rows[pi] || {}, others = rows.filter(function (_, i) { return i !== pi; });
+    var fold = folded[it.key] === true, pt = obj(it.parts);
+    var ph = it.kind === 'case' ? '<div class="photo placeholder card-photo">📱</div>' : photo({ t: it.name, th: it.th }, 'card-photo');
+    var multPill = it.odd ? '<span class="pill risk">⚠️ 价差异常 ' + times(it.mult) + '</span>' : num(it.mult) ? '<span class="pill ' + (it.mult >= 3 ? 'buy' : 'wait') + '">利润 ' + times(it.mult) + '</span>' : '<span class="pill wait">卖价未知</span>';
+    return '<article class="card jh' + (fold ? ' folded' : '') + '" data-key="' + esc(it.key) + '">' +
+      '<button class="fold" data-fold="' + esc(it.key) + '" aria-expanded="' + !fold + '"><div class="card-top">' + ph + '<div class="card-head"><h2>' + esc(str(it.name)) + '</h2><div class="tags"><span class="tag">' + esc(str(it.cat)) + '</span>' + multPill + (it.ip ? '<span class="pill risk">仅供比价</span>' : '') + '<span class="pill score">进货分 ' + Math.round(it.score) + '</span></div></div><span class="caret">' + (fold ? '▾' : '▴') + '</span></div></button>' +
+      '<dl class="mini-table jh-sum"><div><dt>进价（推荐家）</dt><dd>' + yuan(it.cost) + '</dd></div><div><dt>参考卖价</dt><dd>' + yuan(it.sell) + '</dd></div><div><dt>起订量</dt><dd>' + (num(it.moq) ? it.moq + ' 件' : '未取到') + '</dd></div><div><dt>起订最低总价</dt><dd>' + yuan(it.moq_total) + '</dd></div></dl>' +
+      '<div class="body"' + (fold ? ' hidden' : '') + '>' +
+      '<p class="chips">' + riskChip('物流风险', it.logi) + riskChip('授权风险', it.auth) + '<span class="chip">货源抓取 ' + esc(day(it.at)) + '</span></p>' +
+      (it.odd ? '<p class="risk-warning">1688 搜到的多是配件/仿款或价差离谱，倍数不可信，别按这个进。</p>' : '') +
+      '<p class="muted small">卖价来源：' + esc(str(it.sell_src)) + (it.kind === 'case' ? '；倍数只算空壳，未含印图、包装、国际运费' : '') + '。分项：利润 ' + pt.mult + ' · 热度 ' + (num(pt.heat) ? pt.heat : '无') + ' · 供应商 ' + pt.sup + ' · 起订 ' + pt.moq + '</p>' +
+      (typeof pk.why === 'string' ? '<p class="sup-pick' + (it.ip ? ' warn' : '') + '">' + esc(pk.why) + '</p>' : '') +
+      '<ol class="supplier-list">' + (rows.length ? jhSupplier(best, pi, true, it) : '') + '</ol>' +
+      (others.length ? '<button class="more-toggle" data-more aria-expanded="false">看其他 ' + others.length + ' 家 ▾</button><div class="more" hidden><ol class="supplier-list">' + others.map(function (r) { return jhSupplier(r, rows.indexOf(r), false, it); }).join('') + '</ol></div>' : '') +
+      '<p class="sup-meta">来源：' + esc(str(it.src)) + ' · 价格以 1688 页面为准' + (url(it.more) ? ' ' + link(it.more, '看更多货源 ›') : '') + '</p></div></article>';
+  }
+  function jhView() {
+    addable = {};
+    var items = jhItems(), cats = [];
+    items.forEach(function (it) { if (it.cat && cats.indexOf(it.cat) < 0) cats.push(it.cat); });
+    var list = items.filter(function (it) { return arr(it.rows).length && passJh(it); });
+    var key = { mult: function (it) { return it.odd ? -1 : num(it.mult) ? it.mult : 0; }, score: function (it) { return it.score || 0; }, heat: function (it) { return num(it.heat) ? it.heat : -1; }, total: function (it) { return num(it.moq_total) ? -it.moq_total : -1e9; } }[sortBy];
+    list.sort(function (a, b) { return key(b) - key(a) || (b.score || 0) - (a.score || 0); });
+    var w = typeof jh().weights === 'string' ? jh().weights : '';
+    return toolbar(cats, true) + '<p class="count span2">' + list.length + ' 个可进货（共 ' + items.length + '）' + (w ? ' · <span class="muted">' + esc(w) + '</span>' : '') + '</p>' +
+      '<div class="grid">' + (list.map(jhCard).join('') || '<p class="panel">没有符合筛选的商品。</p>') + '</div>';
+  }
+  function shopView() {
+    addable = {};
+    var s = obj(jh().shop), fx = obj(jh().fx), groups = arr(s.groups).map(obj);
+    var q = filters.q.trim().toLowerCase();
+    var shown = groups.filter(function (g) { return !q || (str(g.model) + ' ' + str(g.type) + ' ' + arr(g.designs).join(' ')).toLowerCase().indexOf(q) >= 0; });
+    var types = obj(s.types), tlist = Object.keys(types).map(function (k) { return k + ' ' + types[k]; }).join(' · ');
+    var head = '<section class="panel span2 shop-sum"><h2>moomin.vip 在售：' + (num(s.total) ? s.total : '暂无') + ' 件</h2>' +
+      '<p>手机壳 ' + str(s.cases) + ' 件 · 配件 ' + str(s.acc) + ' 件 · 壳型：' + esc(tlist) + '</p>' +
+      '<p class="muted small">在售清单：' + esc(str(s.src)) + '（只读，抓取于 ' + esc(day(s.at)) + '）· 汇率：1 美元 = ¥' + (num(fx.rate) ? Math.round(fx.rate * 1000) / 1000 : '暂无') + '（' + esc(str(fx.src)) + '，' + esc(day(fx.at)) + '；' + esc(str(fx.note)) + '）</p>' +
+      '<p class="muted small">' + esc(str(s.note)) + '</p>' +
+      '<p class="muted small">图案级绑定（bindings.json）：' + (s.bindings ? s.bindings + ' 款' : '暂空，飞总填好后按绑定的 1688 链接配货') + '</p></section>';
+    function groupCard(g) {
+      var offers = arr(g.offers).map(obj);
+      var rows = offers.map(function (o) {
+        var k = url(o.u) ? regAdd({ u: o.u, shop: o.shop, t: o.t, tn: o.tn, mq: o.moq, loc: o.loc }, str(g.model) + ' ' + str(o.type) + '壳', s.at) : null;
+        return '<tr><td>' + esc(str(o.type)) + (o.fit ? '' : '<small title="1688 标题没写这个机型，下单时确认">*</small>') + '</td><td>' + yuan(o.cost) + '</td><td>' + yuan(o.margin) + '</td><td>' + times(o.mult) + '</td><td class="act">' + (k ? qtyBox(k, o.moq) : '') + link(o.u, '去 1688 ›') + '</td></tr>';
+      }).join('');
+      return '<article class="card shop-g"><div class="shop-head"><h2>' + esc(str(g.model)) + ' · ' + esc(g.type ? g.type + '壳' : '未标壳型') + '</h2><span class="pill tiny ' + (g.how === '绑定' ? 'buy' : 'wait') + '">' + esc(str(g.how)) + '</span></div>' +
+        '<p class="muted small">' + g.n + ' 件 · ' + g.nd + ' 个图案（' + esc(arr(g.designs).slice(0, 4).join('、')) + (g.nd > 4 ? '…' : '') + '）· 售价 ' + usd(g.pmin) + (g.pmax !== g.pmin ? '–' + usd(g.pmax) : '') + '，中位 ' + usd(g.pmed) + '</p>' +
+        '<table class="otable"><thead><tr><th>1688 壳型</th><th>空壳价</th><th>单件毛利</th><th>倍数</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="5">暂无 1688 货源</td></tr>') + '</tbody></table></article>';
+    }
+    var top = shown.slice(0, 12), rest = shown.slice(12);
+    return toolbar([], false, true) + head + '<div class="grid">' + top.map(groupCard).join('') + '</div>' +
+      (rest.length ? '<button class="more-toggle span2" data-more aria-expanded="false">看其余 ' + rest.length + ' 组 ▾</button><div class="more grid" hidden>' + rest.map(groupCard).join('') + '</div>' : '') +
+      '<p class="muted small span2">* = 1688 标题没写这个机型，下单时在 1688 选规格确认。毛利 = 售价中位 × 汇率 − 空壳单价，未含印图、包装、国际运费。</p>';
+  }
+  function cartLine(c, i) {
+    var q = num(c.qty) ? c.qty : 1, p = tierPrice(c.tn, q), low = num(c.moq) && q < c.moq;
+    return '<li class="cline"><div class="cl-main"><b>' + esc(c.t) + '</b><small>' + esc(c.src) + (c.loc ? ' · ' + esc(c.loc) + '发货' : '') + ' · 抓取 ' + esc(day(c.at)) + '</small></div>' +
+      '<div class="cl-num"><input type="number" min="1" step="1" inputmode="numeric" value="' + q + '" data-cartqty="' + i + '" aria-label="数量"><span>× ' + (p === null ? '单价未取到' : yuan(p)) + ' = <b>' + (p === null ? '—' : yuan(p * q)) + '</b></span></div>' +
+      (low ? '<p class="sup-flag">⚠️ 低于起订量 ' + c.moq + ' 件，1688 可能下不了单</p>' : '') +
+      '<div class="cl-act">' + link(c.u, '去 1688 下单 ›', 'buy-link') + '<button class="link-btn" data-del="' + i + '">删除</button></div></li>';
+  }
+  function cartGroups() { var g = {}, order = []; cart.forEach(function (c, i) { if (!g[c.shop]) { g[c.shop] = []; order.push(c.shop); } g[c.shop].push(i); }); return order.map(function (s) { return [s, g[s]]; }); }
+  function lineTotal(c) { var q = num(c.qty) ? c.qty : 1, p = tierPrice(c.tn, q); return p === null ? 0 : p * q; }
+  function cartView() {
+    if (!cart.length) return '<section class="panel"><h2>进货单是空的</h2><p class="muted">在「进货」或「我的店铺」里点「＋进货单」把供应商加进来，数量可以随时改。进货单只存在这台手机/电脑的浏览器里。</p></section>';
+    var total = 0;
+    var html = cartGroups().map(function (g) {
+      var sub = 0; g[1].forEach(function (i) { sub += lineTotal(cart[i]); }); total += sub;
+      return '<section class="panel cgroup"><h2>' + esc(g[0]) + '<small>' + g[1].length + ' 款 · 小计 ' + yuan(sub) + '</small></h2><ul class="clist">' + g[1].map(function (i) { return cartLine(cart[i], i); }).join('') + '</ul></section>';
+    }).join('');
+    return '<section class="panel span2 csum"><h2>合计约 ' + yuan(total) + '<small>' + cart.length + ' 款 · ' + cartGroups().length + ' 家供应商</small></h2>' +
+      '<p class="muted small">按抓取时的阶梯价估算，以 1688 页面为准。不代付：点「去 1688 下单」在 1688 自己选规格、数量、付款。</p>' +
+      '<div class="cbtns"><button id="copyCart">复制清单</button><button id="csvCart">导出 CSV</button><button id="clearCart" class="danger">清空</button></div></section><div class="grid">' + html + '</div>';
+  }
+  function cartText() {
+    var out = [], total = 0;
+    cartGroups().forEach(function (g) {
+      out.push('【' + g[0] + '】');
+      g[1].forEach(function (i) { var c = cart[i], q = c.qty || 1, p = tierPrice(c.tn, q); total += p === null ? 0 : p * q; out.push('- ' + c.t + ' × ' + q + (p === null ? '' : ' @ ¥' + p + ' = ¥' + Math.round(p * q * 100) / 100) + (num(c.moq) && q < c.moq ? '（低于起订量 ' + c.moq + '）' : '') + '\n  ' + c.u); });
+    });
+    out.push('合计约 ¥' + Math.round(total * 100) / 100 + '（以 1688 页面为准）');
+    return out.join('\n');
+  }
+  function csvCell(v) { v = String(v === null || v === undefined ? '' : v); return /[",\n]/.test(v) ? '"' + v.replace(/"/g, '""') + '"' : v; }
+  function cartCsv() {
+    var rows = [['供应商', '商品', '来自', '数量', '单价(元)', '小计(元)', '起订量', '低于起订量', '发货地', '1688链接', '抓取时间']];
+    cart.forEach(function (c) { var q = c.qty || 1, p = tierPrice(c.tn, q); rows.push([c.shop, c.t, c.src, q, p === null ? '' : p, p === null ? '' : Math.round(p * q * 100) / 100, c.moq || '', num(c.moq) && q < c.moq ? '是' : '', c.loc || '', c.u, c.at || '']); });
+    return '\ufeff' + rows.map(function (r) { return r.map(csvCell).join(','); }).join('\r\n');
+  }
+  function flash(t) { el('notice').textContent = t; setTimeout(function () { if (el('notice').textContent === t) el('notice').textContent = ''; }, 2500); }
+  function copyText(t) {
+    function fallback() { var ta = document.createElement('textarea'); ta.value = t; document.body.appendChild(ta); ta.select(); try { document.execCommand('copy'); flash('已复制进货单'); } catch (e) { flash('复制失败，请手动选择'); } document.body.removeChild(ta); }
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(t).then(function () { flash('已复制进货单'); }, fallback); else fallback();
+  }
+  function hotPass(p) {
+    var it = jhById(p.id) || {};
+    if (filters.cat && p.c !== filters.cat) return false;
+    if (filters.has && !arr(obj(p.hy).rows).length) return false;
+    if (filters.m3 && !(num(it.mult) && it.mult >= 3 && !it.odd)) return false;
+    if (filters.moq10 && !(num(it.moq) && it.moq <= 10)) return false;
+    return matchText([str(p.t), str(p.c)]);
+  }
+
   var tabs = [
-    ['picks', '推荐', '有图的商品先排，再按热度从高到低排。点「看详情」能看到数据来源；利润和授权有风险的会标红/黄提示，别只看绿色标签。'],
-    ['profit', '算利润', '把进价和闲鱼、得物卖价放在一起，看看一件大约能赚多少。点「看货源」看 1688 前几家供应商和推荐哪家。'],
-    ['abroad', '海外机会', '泰国、越南、柬埔寨搜索的涨跌和数据够不够，再看看美国亚马逊在卖什么手机配件；点「看完整海外榜单」看全部。'],
-    ['buzz', '全网热议', '小红书、抖音、微博等平台上正在热议的内容，点开看原帖。']
+    ['jh', '进货', '只列有 1688 货源的，默认按利润倍数从高到低；推荐供应商已展开，填数量点「＋进货单」，再到进货单统一去 1688 下单。IP 款未核实授权，仅供比价。'],
+    ['shop', '我的店铺', 'moomin.vip 正在卖的手机壳按机型×壳型汇总，配上 1688 空壳货源，按汇率算单件毛利（未含印图和运费）。'],
+    ['hot', '爆品热度', '全网热度排行（有图先排，再按热度）。底部「海外机会」看泰国、越南、柬埔寨和美国亚马逊。'],
+    ['buzz', '热议', '小红书、抖音、微博等平台上正在热议的内容，点开看原帖。']
   ];
+  var views = { cart: ['cart', '进货单', '按供应商分组；数量改了马上按阶梯价重算。只存在本机浏览器，不代付。'] };
 
   function sortedRows() {
     var rows = arr(data.trends).filter(function (p) { return p && typeof p === 'object' && !Array.isArray(p); });
@@ -478,15 +632,16 @@
 
   function renderContent() {
     var rows = sortedRows(), html = '';
-    if (active === 'picks') { html = reviewCard(rows); displayedRows = rows; html += rows.map(card).join(''); }
-    else if (active === 'profit') {
-      var priced = rows.filter(function (p) { return cost(p) !== null || num(obj(p.dw).ask) || num(obj(p.xy).med) || arr(obj(p.hy).rows).length; });
-      displayedRows = priced;
-      html = extraSourcing() + settingsPanel() + priced.map(comparison).join('');
-    } else if (active === 'abroad') {
-      displayedRows = [];
-      html = countrySection(rows, 'TH', '泰国', '🇹🇭') + countrySection(rows, 'VN', '越南', '🇻🇳') + countrySection(rows, 'KH', '柬埔寨', '🇰🇭') +
-        '<h3 class="group-title">美国亚马逊热卖手机配件</h3>' + amazonList() + overseasFullSection();
+    if (active === 'jh') { displayedRows = []; html = jhView(); }
+    else if (active === 'shop') { displayedRows = []; html = shopView(); }
+    else if (active === 'cart') { displayedRows = []; html = cartView(); }
+    else if (active === 'hot') {
+      var cats = []; rows.forEach(function (p) { if (p.c && cats.indexOf(p.c) < 0) cats.push(p.c); });
+      var list = rows.filter(hotPass); displayedRows = list;
+      html = toolbar(cats, false) + reviewCard(rows) + '<div class="grid">' + (list.map(card).join('') || '<p class="panel">没有符合筛选的商品。</p>') + '</div>' +
+        '<button class="more-toggle span2" data-more aria-expanded="false">看海外机会 ▾</button><div class="more" hidden>' +
+        countrySection(rows, 'TH', '泰国', '🇹🇭') + countrySection(rows, 'VN', '越南', '🇻🇳') + countrySection(rows, 'KH', '柬埔寨', '🇰🇭') +
+        '<h3 class="group-title">美国亚马逊热卖手机配件</h3>' + amazonList() + overseasFullSection() + '</div>';
     } else if (active === 'buzz') { displayedRows = []; html = buzzView(); }
     el('list').innerHTML = html || '<p class="panel">暂无数据，稍后刷新看看。</p>';
   }
@@ -502,10 +657,11 @@
 
   function render() {
     el('tabs').innerHTML = tabs.map(function (t) { return '<button data-tab="' + t[0] + '" aria-pressed="' + (active === t[0]) + '" class="' + (active === t[0] ? 'active' : '') + '"><span>' + t[1] + '</span></button>'; }).join('');
-    var tab = tabs.filter(function (t) { return t[0] === active; })[0];
+    var tab = tabs.filter(function (t) { return t[0] === active; })[0] || views[active] || tabs[0];
+    saveCart();
     el('content').innerHTML = freshnessInfo().banner + '<p class="explain">' + tab[2] + '</p><div id="list"></div>';
     renderContent();
-    el('footer').innerHTML = '<details class="panel"><summary>这些数据从哪来？</summary><p>热度参考网上讨论、搜索变化、成交和二手市场。价格来自公开商品页；进货前请核实授权、质量和实际报价。</p><p>有照片的商品先展示，再按热度排列。照片不代表货源已获正品授权。</p></details><p class="updated-at">数据更新于 ' + esc(freshnessInfo().age) + '</p>';
+    el('footer').innerHTML = '<details class="panel"><summary>这些数据从哪来？</summary><p>热度参考网上讨论、搜索变化、成交和二手市场。价格来自公开商品页；进货前请核实授权、质量和实际报价。</p><p>进货页的利润倍数 = 参考卖价 ÷ 推荐供应商单价；卖价用闲鱼成交中位价/得物最低价，手机壳用 moomin.vip 售价 × 汇率。都是估算，照片和 1688 链接不代表正品授权。</p></details><p class="updated-at">数据更新于 ' + esc(freshnessInfo().age) + '</p>';
   }
 
   Object.keys(defaults).forEach(function (k) { var n = Number(settings[k]); settings[k] = settings[k] !== null && settings[k] !== '' && isFinite(n) && n >= 0 ? n : defaults[k]; });
@@ -524,11 +680,31 @@
       if (n.hasAttribute && n.hasAttribute('data-tab')) { active = n.getAttribute('data-tab'); render(); window.scrollTo(0, 0); return; }
       if (n.hasAttribute && n.hasAttribute('data-more')) { setMoreOpen(n, n.getAttribute('aria-expanded') !== 'true'); return; }
       if (n.id === 'refresh') { load(); return; }
+      if (n.id === 'cartBtn') { active = 'cart'; render(); window.scrollTo(0, 0); return; }
+      if (n.hasAttribute && n.hasAttribute('data-fold')) { var fk = n.getAttribute('data-fold'); folded[fk] = !folded[fk]; var art = n.parentNode, body = art.querySelector('.body'); if (body) body.hidden = folded[fk]; art.classList.toggle('folded', folded[fk]); n.setAttribute('aria-expanded', String(!folded[fk])); var ca = n.querySelector('.caret'); if (ca) ca.textContent = folded[fk] ? '▾' : '▴'; return; }
+      if (n.hasAttribute && n.hasAttribute('data-filter')) { var fkey = n.getAttribute('data-filter'); filters[fkey] = !filters[fkey]; renderContent(); return; }
+      if (n.hasAttribute && n.hasAttribute('data-add')) {
+        var ak = n.getAttribute('data-add'), item = addable[ak], qi = el('list').querySelector('[data-qty="' + ak + '"]'), qv = Math.max(1, Math.round(Number(qi && qi.value) || 1));
+        if (item) {
+          var ex = cart.filter(function (c) { return c.u === item.u; })[0];
+          if (ex) ex.qty = (ex.qty || 0) + qv; else cart.push({ u: item.u, shop: item.shop, t: item.t, tn: item.tn, moq: item.moq, src: item.src, at: item.at, loc: item.loc, qty: qv });
+          saveCart(); flash('已加入进货单：' + item.shop + ' × ' + qv + (item.moq && qv < item.moq ? '（低于起订量 ' + item.moq + '）' : ''));
+          n.textContent = '✓ 已加入'; setTimeout(function () { n.textContent = '＋进货单'; }, 1500);
+        }
+        return;
+      }
+      if (n.hasAttribute && n.hasAttribute('data-del')) { cart.splice(Number(n.getAttribute('data-del')), 1); saveCart(); renderContent(); return; }
+      if (n.id === 'clearCart') { if (window.confirm('清空进货单？')) { cart = []; saveCart(); renderContent(); } return; }
+      if (n.id === 'copyCart') { copyText(cartText()); return; }
+      if (n.id === 'csvCart') { var blob = new Blob([cartCsv()], { type: 'text/csv;charset=utf-8' }), a = document.createElement('a'); a.href = URL.createObjectURL(blob); a.download = '进货单-' + new Date().toISOString().slice(0, 10) + '.csv'; document.body.appendChild(a); a.click(); setTimeout(function () { URL.revokeObjectURL(a.href); document.body.removeChild(a); }, 500); return; }
       if (n.id === 'reset') { settings = { ship: 15, kg: 0.3, mult: 2.5 }; save('baopin_v5_settings', JSON.stringify(settings)); renderContent(); return; }
       n = n.parentNode;
     }
   });
+  var qTimer = null;
   document.addEventListener('input', function (e) {
+    if (e.target.id === 'q') { filters.q = e.target.value; clearTimeout(qTimer); qTimer = setTimeout(function () { renderContent(); var qi = el('q'); if (qi) { qi.focus(); qi.setSelectionRange(qi.value.length, qi.value.length); } }, 250); return; }
+    if (e.target.hasAttribute('data-cartqty')) { var ci = Number(e.target.getAttribute('data-cartqty')), cq = Math.round(Number(e.target.value)); if (cart[ci] && cq >= 1) { cart[ci].qty = cq; saveCart(); clearTimeout(qTimer); qTimer = setTimeout(function () { renderContent(); var f = el('list').querySelector('[data-cartqty="' + ci + '"]'); if (f) { f.focus(); } }, 400); } return; }
     var k = e.target.getAttribute('data-setting'), v = Number(e.target.value);
     if (!Object.prototype.hasOwnProperty.call(defaults, k)) return;
     if (e.target.value !== '' && isFinite(v) && v >= 0) {
@@ -540,7 +716,7 @@
         var id = Number(node.getAttribute('data-item')), p = displayedRows[id];
         if (!p) return;
         var moreToggle = node.querySelector('[data-more]'), wasOpen = !!moreToggle && moreToggle.getAttribute('aria-expanded') === 'true';
-        node.outerHTML = active === 'picks' ? card(p, id) : comparison(p, id);
+        node.outerHTML = card(p, id);
         if (wasOpen) {
           var fresh = el('list').querySelector('[data-item="' + id + '"] [data-more]');
           if (fresh) setMoreOpen(fresh, true);
@@ -549,6 +725,10 @@
       var notice = el('list').querySelector('.review-notice');
       if (notice) notice.outerHTML = reviewAssumptionsNotice(obj(data.review), displayedRows);
     }
+  });
+  document.addEventListener('change', function (e) {
+    if (e.target.id === 'fcat') { filters.cat = e.target.value; renderContent(); }
+    if (e.target.id === 'sort') { sortBy = e.target.value; renderContent(); }
   });
   document.addEventListener('error', function (e) {
     if (e.target.tagName === 'IMG') { var tile = document.createElement('div'); tile.className = 'photo placeholder ' + e.target.className.replace('photo', '').trim(); tile.textContent = (e.target.alt || '').slice(0, 2); e.target.parentNode.replaceChild(tile, e.target); }
