@@ -8,92 +8,109 @@
     var link = document.querySelector('link[rel=stylesheet]'); if (link) link.parentNode.removeChild(link);
     var st = document.createElement('style'); st.textContent = V5_CSS + '\n.back-simple{display:inline-flex;align-items:center;padding:0 12px;height:44px;border-radius:12px;border:1px solid #e0d6c2;background:#fff;color:#2b795f;font-weight:600;text-decoration:none;white-space:nowrap}';
     document.head.appendChild(st);
-    document.title = '更多 · 值得进的货';
+    document.title = '更多 · 进货';
     document.body.className = ''; document.body.innerHTML = V5_BODY;
     runV5(m[1]);
   } else {
-    runSimple();
+    runShop();
   }
   }
-  // ===== v6 简单版：一个列表「值得进的货」 =====
-  function runSimple() {
-    var data = {}, chip = '';
+  // ===== v7「按我的店铺进货」：每个图案 / 每个机型×壳型都配 1688 货源 =====
+  function runShop() {
+    var data = {}, view = 'd', q = '', model = '', type = '', limit = 40;
     function obj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
     function arr(v) { return Array.isArray(v) ? v : []; }
     function num(v) { return typeof v === 'number' && isFinite(v); }
     function str(v) { return typeof v === 'string' || num(v) ? String(v) : ''; }
     function esc(v) { return str(v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
     function parse(v) { try { return JSON.parse(v); } catch (e) { return null; } }
-    function read(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
-    function save(k, v) { try { localStorage.setItem(k, v); } catch (e) {} }
     function el(k) { return document.getElementById(k); }
-    function okUrl(u) { return typeof u === 'string' && /^https:\/\/[^\s]+$/.test(u) ? u : ''; }
+    function yuan(v) { return num(v) ? '¥' + Math.round(v * 100) / 100 : ''; }
+    function dollars(pr) { pr = arr(pr); return pr.length ? '$' + pr[0] + (pr[1] !== pr[0] ? '–' + pr[1] : '') : ''; }
+    function city(l) { return str(l).replace(/(市|县|区)$/, ''); }
     function thumb(p) { return typeof p === 'string' && /^thumbs\/[a-zA-Z0-9_-]+\.webp$/.test(p) ? p : ''; }
-    function money(v) { return Math.round(v * 100) / 100; }
-    function yuan(v) { return num(v) ? '¥' + money(v) : ''; }
-    function usd(v) { return num(v) ? '$' + (v < 1 ? money(v).toFixed(2) : money(v)) : ''; }
-    function times(v) { return v >= 10 ? Math.round(v) : Math.round(v * 10) / 10; }
-    function city(loc) { return typeof loc === 'string' ? loc.replace(/(市|县|区)$/, '') : ''; }
-    var CASE_NAME = { '透明': '透明手机壳', '奶油胶': '奶油胶手机壳', '磁吸': '磁吸手机壳', '硬壳': '硬壳手机壳' };
-    function name(it) { return it.kind === 'case' ? (CASE_NAME[it.ctype] || str(it.name)) + '（空壳）' : str(it.name); }
-    function group(it) { return it.kind === 'case' ? str(it.ctype) : str(it.cat); }
+    function offer(o) { return /^\d+$/.test(str(o)) ? 'https://detail.1688.com/offer/' + o + '.html' : ''; }
+    function search(k) { return 'https://m.1688.com/offer_search/-6D7033.html?keywords=' + encodeURIComponent(k); }
+    function okUrl(u) { return typeof u === 'string' && /^https:\/\/[^\s"]+$/.test(u) ? u : ''; }
+    function short(m) { return str(m).replace(/\s*pro max/i, 'PM').replace(/\s*pro$/i, 'P').replace(/\s*plus/i, 'Plus').replace(/\s*air/i, 'Air').replace(/\s+/g, ''); }
+    function a(u, t, cls) { return okUrl(u) ? '<a class="' + cls + '" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + t + '</a>' : ''; }
+    function D() { return obj(obj(data.jh).designs); }
+    function models() { return arr(D().models); }
+    var LV = { 1: ['same', '1688 名字对上的款（对比一下图）'], 2: ['like', '1688 相似款，点进去看图确认'], 3: ['style', '没搜到同名款，这是最接近的一家，看图挑'] };
 
-    // 排序沿用 v5 进货页默认：利润倍数高的在前（价差异常的不进列表），同倍数看进货分。
-    function items() {
-      var all = arr(obj(data.jh).items).map(obj).filter(function (it) { return arr(it.rows).length && !it.odd; });
-      all.sort(function (a, b) { return (num(b.mult) ? b.mult : 0) - (num(a.mult) ? a.mult : 0) || (b.score || 0) - (a.score || 0); });
-      return all;
-    }
-    function rate() { var r = obj(obj(data.jh).fx).rate; return num(r) && r > 0 ? r : null; }
-    function sellLine(it) {
-      if (!num(it.mult)) return '卖价还不清楚';
-      var src = str(it.sell_src), m = /\$([\d.]+)/.exec(src), where;
-      if (it.kind === 'case' && m) where = '你店里卖 $' + m[1];
-      else if (/闲鱼/.test(src)) where = '闲鱼上卖 ' + yuan(it.sell) + ' 左右';
-      else if (/得物/.test(src)) where = '得物上卖 ' + yuan(it.sell) + ' 左右';
-      else where = '可以卖 ' + yuan(it.sell) + ' 左右';
-      return where + '，' + (it.mult >= 2 ? '利润约 <b>' + times(it.mult) + ' 倍</b>' : '利润不高（约 ' + times(it.mult) + ' 倍）');
-    }
-    function card(it) {
-      var rows = arr(it.rows).map(obj), pk = obj(it.pick), pi = num(pk.i) && pk.i < rows.length ? pk.i : 0, best = rows[pi] || {};
-      var others = rows.filter(function (_, i) { return i !== pi && okUrl(rows[i].u); }).slice(0, 4), r = rate();
-      var img = thumb(it.th) ? '<img src="./' + esc(it.th) + '" alt="' + esc(name(it)) + '" loading="lazy">' : '<span class="ph">' + (it.kind === 'case' ? '📱' : '🎁') + '</span>';
-      var shop = typeof best.shop === 'string' && best.shop ? best.shop : '1688 商家';
+    function dCard(d) {
+      var b = obj(d.b), ms = arr(d.md).map(function (i) { return short(models()[i]); }), lv = LV[b.lv] || null, u = offer(b.o);
+      var img = thumb(d.th) ? '<img src="./' + esc(d.th) + '" alt="' + esc(d.n) + '" loading="lazy">' : '<span class="ph">📱</span>';
+      var im = b.im ? '<img class="s-1688img" src="https://cbu01.alicdn.com/' + esc(b.im) + '_120x120.jpg" alt="1688 图" loading="lazy" referrerpolicy="no-referrer">' : '';
       return '<article class="s-card">' +
-        '<div class="s-img">' + img + '</div>' +
-        '<div class="s-body">' +
-        '<h2>' + esc(name(it)) + '</h2>' +
-        '<p class="s-cost">进价 <b>' + yuan(it.cost) + '</b> / 个' + (r ? '<span>≈ ' + usd(it.cost / r) + '</span>' : '') + '</p>' +
-        '<p class="s-sell">' + sellLine(it) + '</p>' +
-        '<p class="s-shop">🏭 ' + esc(shop) + (city(best.loc) ? ' · ' + esc(city(best.loc)) + '发货' : '') + '</p>' +
-        (it.ip ? '<p class="s-warn">⚠️ 可能是仿款，没核实正品授权</p>' : '') +
-        (okUrl(best.u) ? '<a class="s-buy" href="' + esc(best.u) + '" target="_blank" rel="noopener noreferrer">去 1688 下单</a>' : '') +
-        (others.length ? '<details class="s-other"><summary>看其他货源</summary><ul>' + others.map(function (o) {
-          return '<li><a href="' + esc(o.u) + '" target="_blank" rel="noopener noreferrer">' + esc(typeof o.shop === 'string' && o.shop ? o.shop : '1688 商家') + '</a><span>' + (num(o.p100) ? yuan(o.p100) : num(o.p) ? yuan(o.p) : '') + (city(o.loc) ? ' · ' + esc(city(o.loc)) : '') + '</span></li>';
-        }).join('') + '</ul></details>' : '') +
+        '<div class="s-img">' + img + (d.c === 'acc' ? '<span class="s-badge">配件</span>' : '') + '</div><div class="s-body">' +
+        '<h2>' + esc(d.n) + '</h2>' +
+        '<p class="s-mine">店里 ' + d.k + ' 个 · 卖 ' + esc(dollars(d.pr)) + '</p>' +
+        (ms.length ? '<p class="s-models">' + esc(ms.slice(0, 6).join(' · ')) + (ms.length > 6 ? ' 等 ' + ms.length + ' 个机型' : '') + '</p>' : '') +
+        (u && b.lv !== 3 ? '<div class="s-sup ' + lv[0] + '">' + im + '<div><p class="s-lv">' + esc(lv[1]) + '</p>' +
+          '<p class="s-cost">进价 <b>' + yuan(b.p) + '</b> / 个' + (num(b.q) ? '<span>' + b.q + ' 件起批</span>' : '') + '</p>' +
+          '<p class="s-shop">🏭 ' + esc(b.s || '1688 商家') + (b.l ? ' · ' + esc(city(b.l)) : '') + '</p></div></div>' +
+          a(u, '去 1688 下单', 's-buy') +
+          (arr(d.o).length ? '<details class="s-other"><summary>看其他货源</summary><ul>' + arr(d.o).map(oLine).join('') + '</ul></details>' : '')
+          : '<p class="s-todo">待找货源 · 1688 没搜到同名款</p>' + a(search((d.q || d.n) + (d.c === 'acc' ? ' 气囊支架' : ' 手机壳')), '去 1688 搜「' + esc(d.q || d.n) + '」', 's-buy') +
+          (u ? '<details class="s-other"><summary>看搜到的最接近几家</summary><ul>' + [[b.s, b.o, b.p, b.l]].concat(arr(d.o)).map(oLine).join('') + '</ul></details>' : '')) +
         '</div></article>';
     }
-    var CHIPS = ['全部', '透明', '奶油胶', '磁吸', '硬壳', '潮玩'];
+    function oLine(o) { return '<li>' + a(offer(o[1]), esc(o[0] || '1688 商家'), '') + '<span>' + yuan(o[2]) + (o[3] ? ' · ' + esc(city(o[3])) : '') + '</span></li>'; }
+    function gCard(g) {
+      var offers = arr(g.offers).map(obj).filter(function (o) { return okUrl(o.u); });
+      return '<article class="s-card s-group"><div class="s-body">' +
+        '<h2>' + esc(g.model) + ' · ' + esc(g.type ? g.type + '壳' : '壳型没标') + '</h2>' +
+        '<p class="s-mine">店里 ' + g.n + ' 个 · ' + g.nd + ' 个图案 · 卖 ' + esc(dollars([g.pmin, g.pmax])) + '</p>' +
+        '<p class="s-models">' + esc(arr(g.designs).slice(0, 5).join('、')) + (g.nd > 5 ? '…' : '') + '</p>' +
+        (offers.length ? '<ul class="s-blank">' + offers.map(function (o) {
+          return '<li><div><b>' + esc(o.type) + '空壳 ' + yuan(o.cost) + '</b><small>' + (num(o.moq) ? o.moq + ' 件起 · ' : '') + esc(city(o.loc)) + (o.fit ? '' : ' · 标题没写这个机型，下单时选规格确认') + '</small></div>' + a(o.u, '去 1688 下单', 's-buy small') + '</li>';
+        }).join('') + '</ul>' : '<p class="s-todo">待找货源</p>') +
+        '</div></article>';
+    }
+    function passD(d) {
+      if (q && (d.n + ' ' + (d.q || '')).toLowerCase().indexOf(q.toLowerCase()) < 0) return false;
+      if (model !== '' && arr(d.md).indexOf(Number(model)) < 0) return false;
+      if (type && (type === '其他' ? d.ty : d.ty !== type)) return false;
+      return true;
+    }
+    function passG(g) {
+      if (q && (str(g.model) + ' ' + arr(g.designs).join(' ')).toLowerCase().indexOf(q.toLowerCase()) < 0) return false;
+      if (model !== '' && str(g.model).trim().toLowerCase() !== models()[Number(model)]) return false;
+      if (type && (type === '其他' ? g.type : (type === '镜面' ? g.type !== '硬壳' : g.type !== type))) return false;
+      return true;
+    }
     function render() {
-      var list = items();
-      var shown = list.filter(function (it) { return !chip || group(it) === chip; });
-      el('chips').innerHTML = CHIPS.map(function (c) { var v = c === '全部' ? '' : c; return '<button data-chip="' + esc(v) + '" class="' + (chip === v ? 'on' : '') + '" aria-pressed="' + (chip === v) + '">' + esc(c) + '</button>'; }).join('');
-      el('list').innerHTML = shown.map(card).join('') || '<p class="s-empty">这一类暂时没有值得进的货。</p>';
+      var ds = arr(D().items).map(obj), gs = arr(obj(obj(data.jh).shop).groups).map(obj);
+      var found = ds.filter(function (d) { return d.b && d.b.lv !== 3; }).length;
+      el('sum').textContent = '店里 ' + ds.reduce(function (s, d) { return s + (d.k || 0); }, 0) + ' 个商品、' + ds.length + ' 个图案：' + found + ' 个在 1688 找到货，' + (ds.length - found) + ' 个待找';
+      el('views').innerHTML = [['d', '按图案（成品）'], ['g', '按机型（空壳）']].map(function (v) { return '<button data-view="' + v[0] + '" class="' + (view === v[0] ? 'on' : '') + '">' + v[1] + '</button>'; }).join('');
+      var sel = el('model'); if (!sel.options.length) sel.innerHTML = '<option value="">全部机型</option>' + models().map(function (m, i) { return '<option value="' + i + '">' + esc(m) + '</option>'; }).join('');
+      el('chips').innerHTML = ['全部', '透明', '镜面', '其他'].map(function (c) { var v = c === '全部' ? '' : c; return '<button data-type="' + v + '" class="' + (type === v ? 'on' : '') + '">' + c + '</button>'; }).join('');
+      var list = view === 'd' ? ds.filter(passD) : gs.filter(passG);
+      el('count').textContent = list.length ? '共 ' + list.length + (view === 'd' ? ' 个图案，店里上架多的排前面' : ' 组机型×壳型') : '';
+      el('list').innerHTML = list.slice(0, limit).map(view === 'd' ? dCard : gCard).join('') || '<p class="s-empty">没有符合的，换个机型或关键词试试。</p>';
+      el('moreBtn').hidden = list.length <= limit;
+      el('moreBtn').textContent = '再看 ' + Math.min(40, list.length - limit) + ' 个（还有 ' + (list.length - limit) + ' 个）';
       var stamp = Date.parse(data.collected_at || data.generated_at), h = isNaN(stamp) ? null : Math.max(0, Math.floor((Date.now() - stamp) / 3600000));
-      el('updated').textContent = (h === null ? '' : '数据更新于 ' + (h >= 48 ? Math.floor(h / 24) + ' 天前' : h < 1 ? '刚刚' : h + ' 小时前') + ' · ') + '价格以 1688 页面为准';
+      el('updated').textContent = (h === null ? '' : '数据更新于 ' + (h >= 48 ? Math.floor(h / 24) + ' 天前' : h < 1 ? '刚刚' : h + ' 小时前') + ' · ') + '进价以 1688 页面为准，只帮你找货，不代付';
     }
     document.addEventListener('click', function (e) {
-      var b = e.target.closest && e.target.closest('[data-chip]');
-      if (b) { chip = b.getAttribute('data-chip'); render(); }
+      var t = e.target.closest && e.target.closest('[data-view],[data-type],#moreBtn');
+      if (!t) return;
+      if (t.id === 'moreBtn') { limit += 40; render(); return; }
+      if (t.hasAttribute('data-view')) { view = t.getAttribute('data-view'); limit = 40; }
+      else type = t.getAttribute('data-type');
+      render();
     });
-    function load() {
-      var xhr = new XMLHttpRequest();
-      xhr.open('GET', './data.json?t=' + Date.now(), true); xhr.timeout = 15000;
-      function fail() { var c = parse(read('baopin_v5_data')); if (c && typeof c === 'object') { data = c; render(); el('notice').textContent = '网络不通，显示上次的数据。'; } else el('notice').textContent = '加载失败，下拉刷新再试。'; }
-      xhr.onload = function () { var d = parse(xhr.responseText); if (xhr.status >= 200 && xhr.status < 300 && d && typeof d === 'object') { data = d; save('baopin_v5_data', xhr.responseText); el('notice').textContent = ''; render(); } else fail(); };
-      xhr.onerror = fail; xhr.ontimeout = fail; xhr.send();
-    }
-    load();
+    var timer = null;
+    document.addEventListener('input', function (e) { if (e.target.id === 'q') { clearTimeout(timer); timer = setTimeout(function () { q = e.target.value.trim(); limit = 40; render(); }, 250); } });
+    document.addEventListener('change', function (e) { if (e.target.id === 'model') { model = e.target.value; limit = 40; render(); } });
+    var xhr = new XMLHttpRequest();
+    xhr.open('GET', './data.json?t=' + Date.now(), true); xhr.timeout = 15000;
+    function fail() { var c = null; try { c = parse(localStorage.getItem('baopin_v5_data')); } catch (e2) {} if (c && typeof c === 'object') { data = c; render(); el('notice').textContent = '网络不通，显示上次的数据。'; } else el('notice').textContent = '加载失败，刷新再试。'; }
+    xhr.onload = function () { var d = parse(xhr.responseText); if (xhr.status >= 200 && xhr.status < 300 && d && typeof d === 'object') { data = d; try { localStorage.setItem('baopin_v5_data', xhr.responseText); } catch (e3) {} el('notice').textContent = ''; render(); } else fail(); };
+    xhr.onerror = fail; xhr.ontimeout = fail; xhr.send();
   }
   var V5_CSS = ":root {\n  font-family: -apple-system, BlinkMacSystemFont, \"PingFang SC\", \"Microsoft YaHei\", sans-serif;\n  color: #262b26;\n  background: #fbf7ef;\n  font-size: 16px;\n  line-height: 1.65;\n}\n* { box-sizing: border-box; }\nbody { margin: 0; padding-bottom: calc(76px + env(safe-area-inset-bottom, 0px)); }\nmain, header, footer { max-width: 480px; margin: 0 auto; padding: 0 16px; }\n\n/* header */\nheader {\n  display: flex; align-items: center; justify-content: space-between; gap: 10px;\n  padding: 16px 16px 12px; position: sticky; top: 0; z-index: 6;\n  background: #fbf7efed; backdrop-filter: blur(6px);\n  border-bottom: 1px solid #eadfca;\n}\n.eyebrow { font-size: 13px; color: #a06c38; margin: 0; font-weight: 600; }\nh1 { font-size: 22px; line-height: 1.3; margin: 2px 0 0; }\n#refresh {\n  flex-shrink: 0; width: 44px; height: 44px; border-radius: 50%; font-size: 19px;\n  display: flex; align-items: center; justify-content: center; padding: 0;\n}\n#notice { max-width: 480px; margin: 0 auto; padding: 8px 16px 0; color: #8a6a35; font-size: 13px; min-height: 1px; }\n\n/* generic */\nbutton {\n  border-radius: 12px; background: linear-gradient(#fff, #f2eee5); border: 1px solid #e0d6c2;\n  box-shadow: inset 0 1px 0 rgba(255,255,255,.6), 0 2px 0 #d9cdb3, 0 3px 8px rgba(0,0,0,.06);\n  color: #2e332c; font: inherit; font-weight: 600; cursor: pointer; transition: transform 100ms, box-shadow 100ms;\n}\nbutton:active { transform: translateY(1px); box-shadow: inset 0 2px 4px #0002; }\nbutton:focus-visible, a:focus-visible, input:focus-visible, summary:focus-visible { outline: 3px solid #2b795f; outline-offset: 2px; }\na { color: #27694f; text-decoration: underline; text-underline-offset: 3px; font-weight: 600; }\na:active { opacity: .7; }\n[hidden] { display: none !important; }\n.muted { color: #726c5e; font-size: 14px; }\n\n/* explain banner */\n.explain { background: #efe9da; color: #5c5547; border-radius: 12px; padding: 12px 14px; margin: 14px 0; font-size: 13.5px; }\n.staleness-warning { background: #fff2cf; color: #704a0a; border: 1px solid #dfb44e; border-radius: 12px; padding: 12px 14px; margin: 14px 0 0; box-shadow: 0 2px 0 #e4c77f; font-size: 13.5px; }\n.staleness-warning small { display: block; margin-top: 6px; }\n.stale-sources { color: #704a0a; font-size: 13px; }\n\n/* review card */\n.review-card { overflow-wrap: anywhere; background: #fff8ec; border-left: 4px solid #e2a04f; border-radius: 14px; padding: 16px; margin-bottom: 16px; box-shadow: 0 3px 14px rgba(70,45,20,.08); }\n.review-card h2 { font-size: 16px; margin: 0 0 10px; display: flex; align-items: center; gap: 8px; }\n.review-card small { font-size: 12px; font-weight: normal; background: #fff1df; border-radius: 20px; padding: 3px 8px; white-space: nowrap; }\n.review-card ul { padding-left: 18px; margin: 0 0 8px; }\n.review-card li { margin: 6px 0; font-size: 14.5px; }\n.review-card p { font-size: 12px; color: #8a8375; margin: 0; }\n.review-notice { font-size: 14px; color: #8a8375; margin: 8px 0 0; }\n.review-notice.warn { color: #8a5a06; background: #fff2cf; border-radius: 10px; padding: 8px 10px; font-weight: 600; }\n\n/* card (picks tab) */\n.card, .panel { background: #fff; border: 1px solid #ece6d9; border-radius: 16px; box-shadow: 0 4px 16px #52462d0d; margin-bottom: 14px; padding: 14px; overflow: hidden; }\n.card-top { display: flex; gap: 12px; }\n.photo { object-fit: cover; display: block; background: #efe8db; border-radius: 12px; flex-shrink: 0; }\n.card-photo { width: 64px; height: 64px; }\n.placeholder { display: flex; align-items: center; justify-content: center; background: radial-gradient(at 20% 10%, #faf0d8, transparent 60%), linear-gradient(140deg, #e2eee4, #e9dece); font-weight: 700; letter-spacing: 1px; color: #737b68; font-size: 20px; }\n.card-head { flex: 1; min-width: 0; }\n.card-head h2 { font-size: 17px; line-height: 1.35; margin: 0 0 6px; overflow-wrap: anywhere; }\n.tags { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }\n.tag { font-size: 12px; background: #f1ece0; color: #716a56; border-radius: 999px; padding: 3px 9px; font-weight: 600; }\n.pill { display: inline-block; border-radius: 999px; padding: 4px 10px; font-size: 13px; white-space: nowrap; font-weight: 700; border: 1px solid transparent; }\n.pill.tiny { font-size: 11.5px; padding: 3px 8px; }\n.hot { background: #ffe9d8; color: #a13914; border-color: #f0c5a3; }\n.buy { background: #dcf3e1; color: #246342; border-color: #bad6bf; }\n.wait { background: #ececea; color: #5e625d; }\n.risk { background: #fff2cf; color: #8a5a06; border-color: #dfb44e; }\n.match { background: #dfeafd; color: #1e5aa8; }\n.candidate { background: #fde8d8; color: #a15b1a; }\n\n.why { font-size: 13.5px; color: #6c6657; margin: 10px 0 0; }\n.risk-warning { font-size: 13.5px; font-weight: 700; color: #9a3b19; background: #fdece3; border-radius: 10px; padding: 8px 12px; margin: 10px 0 0; }\n\n.heat { display: flex; align-items: center; gap: 10px; margin: 10px 0; }\n.heat-label { font-size: 13px; font-weight: 700; color: #4a4d44; white-space: nowrap; }\n.heat-track { flex: 1; height: 8px; border-radius: 5px; background: #efe9de; overflow: hidden; }\n.heat-fill { display: block; height: 100%; background: linear-gradient(90deg, #e4a66c, #c0652f); border-radius: 5px; }\n\n.facts { padding-left: 18px; margin: 10px 0; font-size: 14.5px; }\n.facts li { margin: 5px 0; }\n\n.profit-box { border-radius: 10px; padding: 10px 12px; margin: 10px 0; font-size: 14.5px; font-weight: 600; }\n.profit-box.good { background: #e8f6ec; color: #1f6e46; }\n.profit-box.bad { background: #fdece3; color: #9a3b19; }\n.profit-box.warn { background: #fff2cf; color: #8a5a06; }\n.profit-box.unknown { background: #f1ece0; color: #726c5e; font-weight: 500; }\n\n.more-toggle { width: 100%; margin-top: 4px; min-height: 42px; }\n.more { border-top: 1px solid #ece6d9; margin-top: 12px; padding-top: 4px; font-size: 14px; overflow-wrap: anywhere; }\n.more section + section { border-top: 1px solid #f1ece0; margin-top: 6px; padding-top: 2px; }\n.more h3 { font-size: 13px; color: #a06c38; margin: 10px 0 4px; }\n.detail-list { list-style: none; padding: 0; margin: 0; }\n.detail-list li { padding: 5px 0; border-bottom: 1px dashed #f1ece0; font-size: 14px; }\n.detail-list li:last-child { border-bottom: none; }\n.detail-list a { display: inline-block; margin-left: 4px; font-size: 14px; }\n\n/* profit comparison tab */\n.settings p { color: #6c6657; font-size: 13.5px; }\n.settings h2 { font-size: 16px; margin: 0 0 8px; }\nlabel { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin: 14px 0; font-size: 14px; }\ninput { font: inherit; width: 90px; border: 1px solid #cfc8bb; border-radius: 9px; padding: 7px; background: #fffdf9; box-shadow: inset 0 2px 4px #00000008; }\n\n.comparison .compare-head { display: flex; align-items: center; gap: 10px; margin-bottom: 10px; }\n.compare-photo { width: 52px; height: 52px; }\n.compare-head h2 { font-size: 16px; margin: 0; overflow-wrap: anywhere; }\n.mini-table { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; margin: 0 0 8px; }\n.mini-table dt { color: #837c6c; font-size: 12.5px; }\n.mini-table dd { margin: 2px 0 0; font-weight: 700; overflow-wrap: anywhere; font-size: 14px; }\n.buy-link { display: inline-block; margin-top: 4px; }\n\n/* 货源 (1688 suppliers) */\n.sourcing-toggle { margin-top: 10px; }\n.more.sourcing { padding-top: 8px; }\n.sup-pick { background: #e8f6ec; color: #1f6e46; border-radius: 10px; padding: 8px 12px; margin: 4px 0 10px; font-size: 14px; font-weight: 700; }\n.sup-pick.warn { background: #fff2cf; color: #8a5a06; }\n.supplier-list { list-style: none; padding: 0; margin: 0; }\n.supplier { border: 1px solid #ece6d9; border-radius: 12px; padding: 10px 12px; margin-bottom: 10px; background: #fffdf9; }\n.supplier.picked { border-color: #bad6bf; background: #f6fbf7; box-shadow: 0 2px 0 #dcefe1; }\n.sup-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; font-size: 14.5px; overflow-wrap: anywhere; }\n.sup-title { margin: 4px 0 8px; font-size: 13px; color: #6c6657; overflow-wrap: anywhere; }\n.sup-grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px 10px; margin: 0; }\n.sup-grid dt { color: #837c6c; font-size: 12px; }\n.sup-grid dd { margin: 1px 0 0; font-weight: 700; font-size: 13.5px; overflow-wrap: anywhere; }\n.sup-grid dd.na { color: #a39c8c; font-weight: 500; }\n.sup-tiers { margin: 8px 0 0; font-size: 12.5px; color: #4a4d44; }\n.sup-flag { margin: 6px 0 0; font-size: 12.5px; font-weight: 700; color: #8a5a06; }\n.sup-link { display: inline-block; margin-top: 6px; font-size: 14px; }\n.sup-meta { font-size: 12px; color: #8a8375; margin: 2px 0 6px; }\n.sourcing-extra h2 small { font-size: 11.5px; vertical-align: middle; margin-left: 4px; }\n\n/* abroad tab */\n.group-title { font-size: 14px; color: #a06c38; margin: 18px 4px 10px; font-weight: 700; }\n.group-title:first-child { margin-top: 2px; }\n.abroad-row, .amazon-row { display: flex; align-items: center; gap: 12px; margin-bottom: 10px; }\n.abroad-photo { width: 52px; height: 52px; }\n.abroad-body h3 { font-size: 15px; margin: 0 0 3px; }\n.abroad-body p { margin: 0 0 4px; font-size: 13.5px; color: #4a4d44; }\n.abroad-body p.decline { color: #9a3b19; }\n.small-link { font-size: 13px; padding: 0; }\n.country-status { font-size: 13px; color: #4a4d44; margin: 0 4px 10px; }\n.country-status.warn { color: #8a5a06; }\n.amazon-body { flex: 1; min-width: 0; }\n.amazon-title { font-size: 14px; margin: 0 0 4px; overflow-wrap: anywhere; }\n.amazon-price { margin: 0; font-size: 13.5px; font-weight: 700; color: #246342; }\n\n/* buzz tab */\n.signal { padding: 12px 14px; }\n.signal-top { display: flex; gap: 6px; margin-bottom: 6px; flex-wrap: wrap; }\n.signal-title { margin: 0 0 4px; font-size: 14.5px; overflow-wrap: anywhere; }\n.signal-heat { margin: 0 0 4px; font-size: 13px; color: #726c5e; }\n\n/* footer */\nfooter { color: #726c5e; font-size: 13px; padding: 4px 16px 16px; }\nfooter .panel { box-shadow: none; background: #f3eee4; margin-bottom: 10px; }\nfooter summary { cursor: pointer; font-weight: 600; font-size: 14px; }\nfooter p { overflow-wrap: anywhere; }\n.updated-at { padding-left: 2px; }\n\n/* bottom tab bar */\n#tabs {\n  position: fixed; left: 0; right: 0; bottom: 0; z-index: 7;\n  display: grid; grid-template-columns: repeat(4, 1fr);\n  background: #fffdf8f5; backdrop-filter: blur(8px);\n  border-top: 1px solid #eadfca;\n  padding: 6px 8px calc(6px + env(safe-area-inset-bottom, 0px));\n  max-width: 480px; margin: 0 auto;\n  box-shadow: 0 -4px 14px rgba(0,0,0,.05);\n}\n#tabs button {\n  background: none; border: none; box-shadow: none; border-radius: 12px;\n  padding: 8px 2px; font-size: 13px; font-weight: 600; color: #726c5e;\n  min-height: 48px; display: flex; align-items: center; justify-content: center;\n}\n#tabs button.active { background: #e9f2ea; color: #1f6e46; }\n#tabs button:active { transform: none; box-shadow: none; }\n\n@media (min-width: 540px) {\n  main, header, footer, #tabs { max-width: 560px; }\n}\n@media (prefers-reduced-motion: reduce) { * { transition: none !important; } }\n\n/* ===== v5「1688 值得进货」 ===== */\n.hbtns { display: flex; gap: 8px; align-items: center; }\n#cartBtn { height: 44px; padding: 0 12px; font-size: 14px; white-space: nowrap; display: flex; align-items: center; gap: 6px; }\n#cartBtn b { background: #c0652f; color: #fff; border-radius: 999px; padding: 0 7px; font-size: 12px; line-height: 20px; }\n.toolbar { padding: 8px 0; margin: 0; }\n.toolbar input[type=search] { width: 100%; padding: 10px 12px; border-radius: 12px; font-size: 15px; }\n.frow { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }\n.frow::-webkit-scrollbar { display: none; }\n.frow select { font: inherit; font-size: 13.5px; border: 1px solid #e0d6c2; border-radius: 999px; padding: 6px 10px; background: #fff; flex-shrink: 0; }\n.fchip { flex-shrink: 0; border-radius: 999px; padding: 6px 12px; font-size: 13.5px; box-shadow: none; }\n.fchip.on { background: #2b795f; color: #fff; border-color: #2b795f; }\n.count { font-size: 13px; color: #6c6657; margin: 4px 0 10px; }\n.small { font-size: 12.5px; }\n.card.jh .fold { all: unset; display: block; width: 100%; cursor: pointer; }\n.card.jh .fold:focus-visible { outline: 3px solid #2b795f; border-radius: 10px; }\n.caret { color: #a06c38; font-size: 18px; padding-left: 4px; align-self: center; }\n.pill.score { background: #eef0fb; color: #3b4a8a; border-color: #d3d8f0; }\n.jh-sum { margin: 12px 0 4px; grid-template-columns: repeat(4, minmax(0, 1fr)); }\n.chips { display: flex; flex-wrap: wrap; gap: 6px; margin: 8px 0; }\n.chip { font-size: 12.5px; border-radius: 999px; padding: 3px 9px; background: #f1ece0; color: #5c5547; font-weight: 600; }\n.chip.lv-hi { background: #fdece3; color: #9a3b19; }\n.chip.lv-mid { background: #fff2cf; color: #8a5a06; }\n.chip.lv-lo { background: #e8f6ec; color: #1f6e46; }\n.sup-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 8px; }\n.addbox { display: inline-flex; gap: 6px; align-items: center; }\n.addbox input { width: 76px; padding: 7px; }\nbutton.add { padding: 7px 12px; font-size: 14px; background: linear-gradient(#3a8f71, #2b795f); color: #fff; border-color: #2b795f; box-shadow: 0 2px 0 #1f5c47; }\n.shop-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; }\n.shop-head h2, .shop-sum h2, .cgroup h2, .csum h2 { font-size: 16px; margin: 0 0 6px; }\n.cgroup h2 small, .csum h2 small { display: block; font-size: 12.5px; color: #726c5e; font-weight: 500; }\n.otable { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 6px; }\n.otable th { text-align: left; color: #837c6c; font-weight: 600; font-size: 12px; padding: 4px 4px; border-bottom: 1px solid #ece6d9; }\n.otable td { padding: 7px 4px; border-bottom: 1px dashed #f1ece0; vertical-align: middle; }\n.otable td.act { text-align: right; }\n.otable td.act .addbox input { width: 58px; }\n.otable td.act .addbox button.add { padding: 6px 8px; font-size: 12.5px; }\n.otable td.act a { font-size: 13px; margin-left: 6px; white-space: nowrap; }\n.clist { list-style: none; padding: 0; margin: 0; }\n.cline { border-top: 1px dashed #ece6d9; padding: 10px 0; }\n.cl-main b { display: block; font-size: 14px; overflow-wrap: anywhere; }\n.cl-main small { color: #837c6c; font-size: 12px; }\n.cl-num { display: flex; align-items: center; gap: 8px; margin-top: 6px; font-size: 14px; }\n.cl-num input { width: 84px; }\n.cl-act { display: flex; justify-content: space-between; align-items: center; margin-top: 6px; }\n.link-btn { all: unset; color: #9a3b19; font-size: 13.5px; cursor: pointer; text-decoration: underline; }\n.cbtns { display: flex; gap: 8px; flex-wrap: wrap; }\n.cbtns button { padding: 9px 14px; }\n.cbtns .danger { color: #9a3b19; }\n@media (max-width: 420px) {\n  .jh-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); }\n  .otable th:nth-child(4), .otable td:nth-child(4) { display: none; }\n}\n\n/* ===== v5b 布局：手机单列；≥768 顶部导航 + 铺满；≥1024 左侧筛选栏 + 3 列；≥1440 4 列 ===== */\nhtml, body { overflow-x: hidden; max-width: 100%; }\n#layout { max-width: 480px; margin: 0 auto; padding: 0 16px; }\n#layout > main { padding: 0; max-width: none; }\n#side { position: sticky; top: 77px; z-index: 5; background: #fbf7efee; backdrop-filter: blur(6px); margin: 0 -16px; padding: 0 16px; }\n.grid > *, .card, .panel { min-width: 0; }\n.otable { table-layout: auto; }\n.otable td.act .addbox { flex-wrap: wrap; justify-content: flex-end; }\nimg, table { max-width: 100%; }\n#drawer { position: fixed; inset: 0; z-index: 20; }\n.dw-mask { position: absolute; inset: 0; background: rgba(30,30,20,.35); }\n.dw-panel { position: absolute; top: 0; right: 0; bottom: 0; width: min(460px, 92vw); background: #fbf7ef; box-shadow: -8px 0 30px rgba(0,0,0,.18); display: flex; flex-direction: column; }\n.dw-head { display: flex; align-items: center; justify-content: space-between; padding: 14px 18px; border-bottom: 1px solid #eadfca; }\n.dw-head h2 { margin: 0; font-size: 17px; }\n#dwClose { width: 40px; height: 40px; padding: 0; border-radius: 50%; }\n#drawerBody { overflow-y: auto; overflow-x: hidden; padding: 14px 18px 24px; flex: 1; }\n#drawerBody .grid { display: block; }\n#drawerBody .grid > * { margin-bottom: 12px; }\nbody.drawer-open { overflow: hidden; }\n@media (min-width: 540px) and (max-width: 767px) { #layout { max-width: 560px; } }\n@media (min-width: 768px) {\n  body { padding-bottom: 24px; }\n  header, #notice, #layout, footer { max-width: 1600px; padding-left: 24px; padding-right: 24px; }\n  header { position: static; border-bottom: none; padding-top: 14px; padding-bottom: 8px; backdrop-filter: none; background: transparent; }\n  #tabs { position: sticky; top: 0; bottom: auto; max-width: none; margin: 0; display: flex; justify-content: center; gap: 4px;\n    padding: 6px max(24px, calc((100vw - 1600px) / 2 + 24px)); border-top: none; border-bottom: 1px solid #eadfca; box-shadow: 0 4px 12px rgba(0,0,0,.04); }\n  #tabs button { min-height: 40px; padding: 6px 22px; font-size: 15px; flex: 0 0 auto; }\n  #tabs button.active { box-shadow: inset 0 -3px 0 #2b795f; }\n  #side { top: 53px; margin: 0; padding: 0; }\n  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; align-items: start; }\n  .grid > * { margin-bottom: 0; }\n  .grid + *, .more.grid { margin-top: 14px; }\n  .card, .panel { padding: 12px; border-radius: 14px; }\n  .card-head h2, .compare-head h2 { font-size: 15.5px; }\n  .card-photo { width: 52px; height: 52px; }\n  .supplier { padding: 8px 10px; }\n  .sup-title { font-size: 12.5px; margin: 2px 0 6px; }\n  .explain { margin: 8px 0 12px; padding: 10px 12px; font-size: 13px; }\n}\n@media (min-width: 1024px) {\n  body.has-side #layout { display: grid; grid-template-columns: 240px minmax(0, 1fr); gap: 20px; align-items: start; }\n  #side { top: 64px; background: #fff; border: 1px solid #ece6d9; border-radius: 14px; padding: 12px 14px; box-shadow: 0 4px 16px #52462d0d; max-height: calc(100vh - 80px); overflow-y: auto; }\n  #side .toolbar { padding: 0; }\n  #side .frow { flex-direction: column; align-items: stretch; gap: 8px; margin-top: 10px; }\n  #side .frow select, #side .fchip { width: 100%; text-align: left; border-radius: 10px; padding: 8px 12px; }\n  .grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }\n  .jh-sum { grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px 10px; }\n  .sup-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }\n  .otable th:nth-child(4), .otable td:nth-child(4) { display: none; }\n  .otable td.act .addbox input { width: 52px; }\n}\n@media (min-width: 1440px) {\n  .grid { grid-template-columns: repeat(4, minmax(0, 1fr)); }\n}\n";
   var V5_BODY = "<header>\n  <div class=\"header-text\">\n    <p class=\"eyebrow\">飞总的进货参考 · moomin.vip</p>\n    <h1>1688 值得进货</h1>\n  </div>\n  <div class=\"hbtns\"><a class=\"back-simple\" href=\"./\">← 简单版</a><button id=\"cartBtn\" aria-label=\"进货单\">🧾 进货单</button><button id=\"refresh\" aria-label=\"刷新数据\">↻</button></div>\n</header>\n<nav id=\"tabs\" aria-label=\"页面分类\"></nav>\n<p id=\"notice\" role=\"status\">正在加载…</p>\n<div id=\"layout\"><aside id=\"side\" aria-label=\"搜索和筛选\" hidden></aside><main id=\"content\"></main></div>\n<footer id=\"footer\"></footer>\n<div id=\"drawer\" hidden><div class=\"dw-mask\" data-close></div><section class=\"dw-panel\" role=\"dialog\" aria-label=\"进货单\"><div class=\"dw-head\"><h2>🧾 进货单</h2><button id=\"dwClose\" aria-label=\"关闭\">✕</button></div><div id=\"drawerBody\"></div></section></div>";
