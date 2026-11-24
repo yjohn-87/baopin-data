@@ -1,0 +1,83 @@
+{
+  "v": 10,
+  "release_id": "v10-preview-20261124",
+  "generated_at": "2026-11-24T12:43:20.912560+08:00",
+  "generated_at_label": "2026-11-24 12:43 (UTC+8)",
+  "source_snapshot_at": "2026-11-01T11:20:34.852704+00:00",
+  "source_snapshot_label": "2026-11-01 19:20 (UTC+8)",
+  "filters": {
+    "all": "该一级下全部已发布卡（观察卡无购买按钮）",
+    "cute": "cute_score >= 60 且 ip 不是 blocked",
+    "buzz": "buzz_score >= 60 且计入的独立源数 >= 2；AliExpress 累计成交不计入"
+  },
+  "primaries": [
+    {
+      "slug": "phone-cases",
+      "label": "手机壳",
+      "file": "categories/phone-cases.json",
+      "bytes": 10759,
+      "sha256": "c97f5c174f2cc8d5514f7c53a2033fdde2927305d2e2636d74aed75bfcb7d1ad",
+      "suppliers": 21,
+      "themes": 0
+    },
+    {
+      "slug": "accessories",
+      "label": "数码配件",
+      "file": "categories/accessories.json",
+      "bytes": 13364,
+      "sha256": "e52b8aba2cd78e33c9ff2b61773c2d24433b47bf46333fa93e4f383b6b7e95cc",
+      "suppliers": 30,
+      "themes": 0
+    },
+    {
+      "slug": "charms",
+      "label": "包挂挂件",
+      "file": "categories/charms.json",
+      "bytes": 5177,
+      "sha256": "40f425cc3901edb2d3607200e14bd5641bdbb666a05fed152c2e6d9cb55ad51b",
+      "suppliers": 0,
+      "themes": 9
+    },
+    {
+      "slug": "desk",
+      "label": "桌面小物",
+      "file": "categories/desk.json",
+      "bytes": 4572,
+      "sha256": "49ffb5e7722bea569e452cd28cbe0ee8c2b9a018bb4428dcfc3c87f66df8ead8",
+      "suppliers": 0,
+      "themes": 8
+    },
+    {
+      "slug": "stationery",
+      "label": "贴纸文具",
+      "file": "categories/stationery.json",
+      "bytes": 4592,
+      "sha256": "651808905fb9ecb3a127774b88d3eb47279d6f1985076d653f290a87ebdbd461",
+      "suppliers": 0,
+      "themes": 8
+    },
+    {
+      "slug": "hair-jewelry",
+      "label": "发饰饰品",
+      "file": "categories/hair-jewelry.json",
+      "bytes": 4436,
+      "sha256": "983a86991f043bfa40139b59c73b0d9c6dfae38c7925eab59e73fac093c56f72",
+      "suppliers": 0,
+      "themes": 8
+    }
+  ],
+  "files": {
+    "purchase_gate.json": {
+      "bytes": 310747,
+      "sha256": "277d275377036d9d96da71fc2f797f29f6c37d2d596ee2f518ab75cd002ad5a4"
+    },
+    "ip_blocklist.json": {
+      "bytes": 1895,
+      "sha256": "534ff1c7bec144d112f7d1531e6c01195f25d05fdb657c0fb2f701ee96f765c1"
+    },
+    "data.json": {
+      "bytes": 201585,
+      "sha256": "a103b6b28cb090724fd037a52a6f38c36b140dd8bb4ecc07c749749f7e6c4a1a"
+    }
+  }
+}

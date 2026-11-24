@@ -1,82 +1,537 @@
 (function () {
   'use strict';
-  // 默认 = 推荐厂家（v8）；#designs = 按图案找（v7）；#shop/#hot/#buzz/#cart/#jh = 旧完整版（v5 原样）。
-  function boot() {
-  var m = /^#(jh|shop|hot|buzz|cart)$/.exec(location.hash);
-  window.addEventListener('hashchange', function () { location.reload(); });
-  if (m) {
-    var link = document.querySelector('link[rel=stylesheet]'); if (link) link.parentNode.removeChild(link);
-    var st = document.createElement('style'); st.textContent = V5_CSS + '\n.back-simple{display:inline-flex;align-items:center;padding:0 12px;height:44px;border-radius:12px;border:1px solid #e0d6c2;background:#fff;color:#2b795f;font-weight:600;text-decoration:none;white-space:nowrap}';
-    document.head.appendChild(st);
-    document.title = '更多 · 进货';
-    document.body.className = ''; document.body.innerHTML = V5_BODY;
-    runV5(m[1]);
-  } else if (location.hash === '#designs') {
-    document.title = '按图案找货';
-    document.body.innerHTML = V7_BODY;
-    runShop();
-  } else {
-    runSuppliers();
+  var PRIMARIES = [
+    { slug: 'phone-cases', label: '手机壳' },
+    { slug: 'accessories', label: '数码配件' },
+    { slug: 'charms', label: '包挂挂件' },
+    { slug: 'desk', label: '桌面小物' },
+    { slug: 'stationery', label: '贴纸文具' },
+    { slug: 'hair-jewelry', label: '发饰饰品' }
+  ];
+  var RELEASE = '';
+  var state = { data: null, index: null, gate: null, shards: {}, primary: 'phone-cases', typ: '', filter: '', notice: '', fallback: false };
+  var inTg = false;
+
+  function obj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
+  function arr(v) { return Array.isArray(v) ? v : []; }
+  function num(v) { return typeof v === 'number' && isFinite(v); }
+  function str(v) { return typeof v === 'string' || num(v) ? String(v) : ''; }
+  function esc(v) { var map = {'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}; return str(v).replace(/[&<>"']/g, function (c) { return map[c] || c; }); }
+  function el(k) { return document.getElementById(k); }
+  function nint(v) {
+    if (typeof v === 'number' && isFinite(v)) return String(v);
+    if (typeof v === 'string' && /^-?\d+(\.\d+)?$/.test(v.trim())) return v.trim();
+    return '0';
   }
+  var ALLOWED_1688 = { 'detail.1688.com': 1, 'm.1688.com': 1, 'www.1688.com': 1, '1688.com': 1 };
+  function okUrl(u) {
+    if (typeof u !== 'string' || !u) return '';
+    try {
+      var p = new URL(u);
+      if (p.protocol !== 'https:') return '';
+      if (p.username || p.password) return '';
+      var host = String(p.hostname || '').toLowerCase();
+      if (!ALLOWED_1688[host]) return '';
+      if (/^\/offer\/\d+\.html$/i.test(p.pathname)) return 'https://detail.1688.com' + p.pathname;
+      if (/^\/winport\/[A-Za-z0-9_-]+(\.html)?$/i.test(p.pathname)) return 'https://m.1688.com' + p.pathname;
+      if (/^\/offer_search\//i.test(p.pathname)) return 'https://m.1688.com' + p.pathname + (p.search || '');
+      return '';
+    } catch (e) { return ''; }
   }
-  // ===== v8「值得进货的厂家」：按店里的壳型，每类推荐 1–3 家，按钮直达具体商品页 =====
+  function yuan(v) { return num(v) ? '¥' + Math.round(v * 100) / 100 : ''; }
+  function range(a, b) { return num(a) ? yuan(a) + (num(b) && b !== a ? '–' + Math.round(b * 100) / 100 : '') : ''; }
+  function iph(m) { m = arr(m); return m.length ? 'iPhone ' + m[0] + (m[1] !== m[0] ? '–' + m[1] : '') : ''; }
+  function offer(o) { return /^\d+$/.test(str(o)) ? 'https://detail.1688.com/offer/' + o + '.html' : ''; }
+  function home(m) { return /^[a-zA-Z0-9_-]+$/.test(str(m)) ? 'https://m.1688.com/winport/' + m + '.html' : ''; }
+  function city(l) { return str(l).replace(/^(广东|浙江|福建|江苏|河南|山东)(省)?/, '').replace(/(市|县)$/, ''); }
+  function searchUrl(k) { return 'https://m.1688.com/offer_search/-6D7033.html?keywords=' + encodeURIComponent(k); }
+
+  function normUrl(u) {
+    u = str(u).split('#')[0];
+    var checked = okUrl(u);
+    if (checked) return checked;
+    // Do not extract offer/mid from non-1688 hosts (prevents gate bypass via spoofed domains).
+    return '';
+  }
+  function gateRec(u) {
+    var g = state.gate;
+    if (!g) return { status: null, reason: 'gate_unavailable', purchase_ok: false };
+    u = normUrl(u);
+    if (!u) return { status: null, reason: 'empty_url', purchase_ok: false };
+    var rec = (g.by_url || {})[u];
+    if (rec) return rec;
+    var m = u.match(/offer\/(\d{8,})/i);
+    if (m && (g.by_offer || {})[m[1]]) return g.by_offer[m[1]];
+    m = u.match(/winport\/([A-Za-z0-9_-]+)/i);
+    if (m && (g.by_mid || {})[m[1]]) return g.by_mid[m[1]];
+    return { status: null, reason: 'missing', purchase_ok: false };
+  }
+  function isClear(u) { var r = gateRec(u); return r && r.status === 'clear'; }
+  function closedLabel(u, kind) {
+    var r = gateRec(u);
+    var why = (r && r.reason) ? r.reason : '待确认授权，不提供 1688 入口';
+    if (kind === 'shop-soft') {
+      return '<p class="v-shop-muted" title="' + esc(why) + '">厂家店铺入口暂未开放</p>';
+    }
+    if (kind === 'offer-soft') {
+      return '<span class="v-offer-muted" title="' + esc(why) + '">该款暂未开放采购</span>';
+    }
+    if (kind === 'copyright') {
+      return '<p class="v-closed v-closed-all" title="' + esc(why) + '">版权核查未通过，采购入口已关闭</p>';
+    }
+    return '<span class="v-closed" title="' + esc(why) + '">采购入口已关闭</span>';
+  }
+  function extLink(u, t, cls) {
+    u = okUrl(u);
+    if (!u) return '';
+    if (!isClear(u)) return closedLabel(u);
+    return '<a class="' + (cls || '') + '" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer" data-ext="1">' + esc(t) + '</a>';
+  }
+  function bindExtClicks(root) {
+    if (!root || root.__v10ext) return;
+    root.__v10ext = true;
+    root.addEventListener('click', function (e) {
+      var a = e.target.closest && e.target.closest('a[data-ext="1"]');
+      if (!a) return;
+      var u = a.getAttribute('href');
+      if (!okUrl(u) || !isClear(u)) { e.preventDefault(); return; }
+      if (inTg && window.Telegram && Telegram.WebApp && typeof Telegram.WebApp.openLink === 'function') {
+        e.preventDefault();
+        Telegram.WebApp.openLink(u);
+      }
+    });
+  }
+
+  function detectMiniApp() {
+    var w = window.Telegram && window.Telegram.WebApp;
+    if (!w) return false;
+    var plat = str(w.platform).toLowerCase();
+    var known = { ios:1, android:1, macos:1, tdesktop:1, web:1, weba:1, webk:1, unigram:1 };
+    if (plat && plat !== 'unknown' && known[plat]) return true;
+    if (w.initData && String(w.initData).length > 0) return true;
+    var u = w.initDataUnsafe;
+    if (u && typeof u === 'object' && (u.user || u.chat || u.hash || u.start_param)) return true;
+    var blob = String(location.hash || '') + String(location.search || '');
+    if (/tgWebApp(Data|Platform|Version|ThemeParams|StartParam)=/.test(blob)) return true;
+    return false;
+  }
+  function applySafeArea() {
+    var w = window.Telegram && window.Telegram.WebApp;
+    if (!w) return;
+    var s = w.safeAreaInset || {}, c = w.contentSafeAreaInset || {};
+    var st = document.documentElement.style;
+    st.setProperty('--tg-safe-top', (s.top || 0) + 'px');
+    st.setProperty('--tg-safe-right', (s.right || 0) + 'px');
+    st.setProperty('--tg-safe-bottom', (s.bottom || 0) + 'px');
+    st.setProperty('--tg-safe-left', (s.left || 0) + 'px');
+    st.setProperty('--tg-content-top', (c.top || 0) + 'px');
+  }
+  function applyTgTheme() {
+    var w = window.Telegram && window.Telegram.WebApp;
+    if (!inTg || !w) {
+      document.body.classList.remove('tg-theme-dark');
+      return;
+    }
+    if (w.colorScheme === 'dark') document.body.classList.add('tg-theme-dark');
+    else document.body.classList.remove('tg-theme-dark');
+    try {
+      if (w.setHeaderColor) w.setHeaderColor(w.colorScheme === 'dark' ? '#1c1c1e' : '#fbf7ef');
+      if (w.setBackgroundColor) w.setBackgroundColor(w.colorScheme === 'dark' ? '#1c1c1e' : '#fbf7ef');
+    } catch (e) {}
+  }
+  function initTelegram() {
+    inTg = detectMiniApp();
+    var w = window.Telegram && window.Telegram.WebApp;
+    if (!inTg || !w) return;
+    try { if (w.ready) w.ready(); } catch (e) {}
+    try { if (w.expand) w.expand(); } catch (e2) {}
+    try { if (w.disableVerticalSwipes) w.disableVerticalSwipes(); } catch (e3) {}
+    applySafeArea();
+    applyTgTheme();
+    if (w.onEvent) {
+      w.onEvent('themeChanged', applyTgTheme);
+      w.onEvent('safeAreaChanged', applySafeArea);
+      w.onEvent('contentSafeAreaChanged', applySafeArea);
+    }
+  }
+  function syncBackButton() {
+    var w = window.Telegram && window.Telegram.WebApp;
+    if (!inTg || !w || !w.BackButton) return;
+    var st = parseHash();
+    var root = st.view === 'suppliers' && st.primary === 'phone-cases' && !st.typ && !st.filter;
+    if (root) { w.BackButton.hide(); return; }
+    w.BackButton.show();
+    w.BackButton.onClick(function () {
+      if (st.view !== 'suppliers') location.hash = '#c/phone-cases';
+      else if (st.typ || st.filter) location.hash = '#c/' + st.primary;
+      else location.hash = '#c/phone-cases';
+    });
+  }
+
+  function parseHash() {
+    var raw = (location.hash || '').replace(/^#/, '');
+    if (!raw) return { view: 'suppliers', primary: 'phone-cases', typ: '', filter: '', invalid: false };
+    if (/^(jh|shop|hot|buzz|cart)$/.test(raw)) return { view: raw };
+    if (raw === 'designs') return { view: 'designs' };
+    var m = /^c\/([a-z0-9-]+)(?:\/([^;]+))?(?:;f=(all|cute|buzz|viral))?$/.exec(raw);
+    if (!m) return { view: 'suppliers', primary: 'phone-cases', typ: '', filter: '', invalid: true };
+    var slugs = PRIMARIES.map(function (p) { return p.slug; });
+    if (slugs.indexOf(m[1]) < 0) return { view: 'suppliers', primary: 'phone-cases', typ: '', filter: '', invalid: true };
+    var typ = '';
+    if (m[2]) {
+      try { typ = decodeURIComponent(m[2]); } catch (e) { return { view: 'suppliers', primary: 'phone-cases', typ: '', filter: '', invalid: true }; }
+    }
+    var filter = m[3] === 'all' ? '' : (m[3] === 'viral' ? 'buzz' : (m[3] || ''));
+    return { view: 'suppliers', primary: m[1], typ: typ, filter: filter, invalid: false };
+  }
+  function writeHash(primary, typ, filter, push) {
+    var h = '#c/' + primary;
+    if (typ) h += '/' + encodeURIComponent(typ);
+    if (filter) h += ';f=' + filter;
+    if (location.hash === h) return;
+    if (push === false) history.replaceState(null, '', h);
+    else location.hash = h;
+  }
+
+  function lsGet(k) { try { return localStorage.getItem(k); } catch (e) { return null; } }
+  function lsSet(k, v) { try { localStorage.setItem(k, v); return true; } catch (e) { return false; } }
+  function parseJson(t) { try { var o = JSON.parse(t); return o && typeof o === 'object' ? o : null; } catch (e) { return null; } }
+  function sha256hex(buf, cb) {
+    if (!window.crypto || !crypto.subtle) return cb(new Error('no-subtle'));
+    crypto.subtle.digest('SHA-256', buf).then(function (d) {
+      var a = new Uint8Array(d), s = '', i;
+      for (i = 0; i < a.length; i++) s += ('0' + a[i].toString(16)).slice(-2);
+      cb(null, s);
+    }, function (err) { cb(err); });
+  }
+  function fetchChecked(url, expect, cb) {
+    if (typeof url !== 'string' || !/^[a-z0-9_./-]+$/i.test(url) || url.indexOf('..') >= 0) return cb(new Error('bad-url'));
+    var x = new XMLHttpRequest();
+    x.open('GET', url + (url.indexOf('?') >= 0 ? '&' : '?') + 'nc=' + Date.now());
+    x.responseType = 'arraybuffer';
+    x.onload = function () {
+      if (x.status < 200 || x.status >= 300) return cb(new Error('http ' + x.status));
+      var buf = x.response;
+      var bytes = buf.byteLength;
+      if (expect && expect.bytes != null && Number(expect.bytes) !== bytes) return cb(new Error('size'));
+      function finish(okHash) {
+        if (expect && expect.sha256 && String(expect.sha256).toLowerCase() !== String(okHash || '').toLowerCase()) return cb(new Error('hash'));
+        var text;
+        try { text = new TextDecoder('utf-8').decode(buf); } catch (e) { return cb(e); }
+        var o = parseJson(text);
+        if (!o) return cb(new Error('json'));
+        if (expect && expect.release_id && o.release_id && o.release_id !== expect.release_id) return cb(new Error('release'));
+        cb(null, o);
+      }
+      if (expect && expect.sha256) sha256hex(buf, function (e, h) { if (e) cb(e); else finish(h); });
+      else finish(null);
+    };
+    x.onerror = function () { cb(new Error('net ' + url)); };
+    x.send();
+  }
+  function fetchJson(url, cb) { fetchChecked(url, null, cb); }
+  function cacheKey(kind, extra) { return 'baopin_v10_' + kind + '_' + (extra || RELEASE || 'na'); }
+
+  function loadCore(cb) {
+    fetchChecked('categories/index.json', null, function (e, idx) {
+      if (idx && idx.release_id && arr(idx.primaries).length) {
+        state.index = idx;
+        RELEASE = idx.release_id || RELEASE;
+        lsSet(cacheKey('index', idx.release_id), JSON.stringify(idx));
+      } else {
+        state.fallback = true;
+        state.notice = (state.notice || '') + '分类索引不可用，采购入口已关闭。';
+      }
+      var files = obj(state.index && state.index.files);
+      var left = 2, errN = 0;
+      function done() { if (--left <= 0) cb(errN && !state.data); }
+      var dataExpect = files['data.json'] || null;
+      fetchChecked('data.json', dataExpect, function (e2, o) {
+        if (o) { state.data = o; try { lsSet('baopin_v5_data', JSON.stringify(o)); } catch (x) {} }
+        else {
+          var c = parseJson(lsGet('baopin_v5_data'));
+          if (c) { state.data = c; state.notice = (state.notice || '') + '网络不通，显示上次的数据。'; }
+        }
+        if ((e2 || !o) && !state.data) errN++;
+        done();
+      });
+      var gateExpect = files['purchase_gate.json'];
+      if (!state.index || !gateExpect || !gateExpect.sha256) {
+        state.gate = null;
+        state.notice = (state.notice || '') + '采购门校验失败，已关闭 1688 入口。';
+        done();
+      } else {
+        fetchChecked('purchase_gate.json', gateExpect, function (e3, o) {
+          if (o) { state.gate = o; lsSet(cacheKey('gate', RELEASE), JSON.stringify(o)); }
+          else {
+            state.gate = null;
+            state.notice = (state.notice || '') + '采购门校验失败，已关闭 1688 入口。';
+          }
+          done();
+        });
+      }
+    });
+  }
+  function loadShard(slug, cb) {
+    if (!/^[a-z0-9-]+$/.test(slug || '')) return cb(new Error('slug'));
+    if (state.shards[slug]) return cb(null, state.shards[slug]);
+    var meta = null, files = arr(state.index && state.index.primaries);
+    for (var i = 0; i < files.length; i++) if (files[i].slug === slug) meta = files[i];
+    var url = 'categories/' + slug + '.json';
+    if (meta && typeof meta.file === 'string' && /^categories\/[a-z0-9-]+\.json$/.test(meta.file)) url = meta.file;
+    if (!meta || !meta.sha256 || meta.bytes == null) {
+      state.fallback = true;
+      return cb(new Error('no-meta'));
+    }
+    var expect = { sha256: meta.sha256, bytes: meta.bytes, release_id: RELEASE || undefined };
+    fetchChecked(url, expect, function (e, o) {
+      if (!o) {
+        try { localStorage.removeItem(cacheKey('shard', slug + '_' + RELEASE)); } catch (x) {}
+        state.fallback = true;
+        return cb(e || new Error('shard'));
+      }
+      state.shards[slug] = o;
+      lsSet(cacheKey('shard', slug + '_' + (o.release_id || RELEASE || '')), JSON.stringify(o));
+      cb(null, o);
+    });
+  }
+  function suppliersFromFallback() {
+    var types = arr(obj(obj(state.data).jh).suppliers).types || arr(obj(obj(obj(state.data).jh).suppliers).types);
+    // handle both shapes
+    var S = obj(obj(state.data && state.data.jh).suppliers);
+    return { types: arr(S.types), themes: [], fallback: true, source_snapshot_at: (state.data && state.data.v10 && state.data.v10.source_snapshot_at) || '' };
+  }
+
+  function buyRow(b, first, hasClear) {
+    b = obj(b);
+    var im = /^img\/ibank\/[^"'<>]+$/.test(str(b.im)) ? '<img src="https://cbu01.alicdn.com/' + esc(b.im) + '_120x120.jpg" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<span class="v-ph">📱</span>';
+    var u = offer(b.o);
+    var ctl = '';
+    if (u && isClear(u)) ctl = extLink(u, first ? '去 1688 下单' : '下这款', first ? 's-buy' : 'v-buy2');
+    else if (hasClear) ctl = closedLabel(u, 'offer-soft');
+    return '<div class="v-buy' + (first ? ' first' : '') + '">' + im + '<div class="v-bt"><p class="v-btitle">' + esc(b.t) + '</p><p class="v-bp"><b>' + yuan(b.p) + '</b> / 个' + (num(b.q) ? ' · ' + b.q + ' 件起' : '') + '</p></div></div>' + ctl;
+  }
+  function card(s, i, label) {
+    var buys = arr(s.buy).map(obj);
+    var hasClear = buys.some(function (b) { var u = offer(b.o); return u && isClear(u); });
+    var shopU = home(s.mid);
+    var shopHtml = '';
+    // Shop link is allowed only when this card still has at least one clear offer AND the shop URL itself is clear.
+    if (hasClear && shopU && isClear(shopU)) shopHtml = extLink(shopU, '看厂家店铺 ›', 'v-home');
+    else if (hasClear && shopU) shopHtml = closedLabel(shopU, 'shop-soft');
+    var closedAll = hasClear ? '' : closedLabel(shopU || (buys[0] && offer(buys[0].o)) || '', 'copyright');
+    return '<article class="s-card v-card"><div class="s-body">' +
+      '<div class="v-head"><span class="v-rank">' + (i + 1) + '</span><h2>' + esc(s.shop) + '</h2></div>' +
+      '<p class="v-meta">' + (s.factory ? '<span class="v-tag">工厂</span>' : '') + esc(city(s.loc)) + '发货' + (iph(s.models) ? ' · ' + esc(iph(s.models)) : '') + '</p>' +
+      '<p class="v-what"><b>' + esc(label) + '</b>：' + range(s.pmin, s.pmax) + ' / 个' + (num(s.moq) ? '，' + s.moq + ' 件起批' : '') + '</p>' +
+      '<p class="v-strong">' + esc(arr(s.strong).join(' · ')) + '</p>' +
+      (buys.length ? buyRow(buys[0], true, hasClear) : '') +
+      (buys[1] ? '<details class="s-other"><summary>这家还有一款</summary>' + buyRow(buys[1], false, hasClear) + '</details>' : '') +
+      shopHtml + closedAll +
+      '</div></article>';
+  }
+  function themeBlurb(th) {
+    th = obj(th);
+    var src = str(th.src_label || th.source_label || th.origin || '');
+    if (/黑名单|阶段\s*1|搜索直达|手工补录|安全风格关键词|版权门/.test(src)) src = '';
+    if (arr(th.offers).some(function (o) { o = obj(o); var u = okUrl(o.u) || offer(o.o); return u && isClear(u); })) {
+      return src ? ('已核对无商业 IP · ' + src) : '已核对无商业 IP · 已有具体 1688 链接';
+    }
+    if (src) return '原创无版权风格 · ' + src;
+    return '原创无版权风格 · 点击直达 1688 搜同款';
+  }
+  function themeCard(th) {
+    var btn = '';
+    var offers = arr(th.offers);
+    var i, u;
+    for (i = 0; i < offers.length; i++) {
+      u = okUrl(offers[i].u) || offer(offers[i].o);
+      if (u && isClear(u)) btn += extLink(u, '去 1688 下单', 's-buy');
+    }
+    if (th.purchase_ok && th.ip === 'clear' && th.search_u && isClear(th.search_u)) {
+      btn += extLink(th.search_u, '去 1688 搜同款', 's-buy');
+    } else if (!btn) {
+      btn = closedLabel(th.search_u || '');
+    }
+    var tags = [];
+    if (num(th.cute_score) && th.cute_score >= 60) tags.push('可爱风');
+    if (th.buzz) tags.push('多源热议');
+    tags.push('销量未知');
+    var blurb = themeBlurb(th);
+    return '<article class="s-card v-card th-card"><div class="s-body">' +
+      '<div class="v-head"><h2>' + esc(th.n) + '</h2></div>' +
+      '<p class="v-meta">' + esc(tags.join(' · ')) + '</p>' +
+      (blurb ? '<p class="s-meta">' + esc(blurb) + '</p>' : '') +
+      btn + '</div></article>';
+  }
+  function passFilter(th) {
+    if (state.filter === 'cute') return num(th.cute_score) && th.cute_score >= 60 && th.ip !== 'blocked';
+    if (state.filter === 'buzz') return !!th.buzz && th.ip !== 'blocked';
+    return true;
+  }
+  function updateOverflow() {
+    var wrap = el('navWrap'), nav = el('primaries');
+    if (!wrap || !nav) return;
+    var max = nav.scrollWidth - nav.clientWidth - 2;
+    wrap.classList.toggle('overflow-right', nav.scrollWidth > nav.clientWidth + 4 && nav.scrollLeft < max);
+    wrap.classList.toggle('overflow-left', nav.scrollLeft > 2);
+  }
+  function renderNav() {
+    var nav = el('primaries');
+    nav.innerHTML = PRIMARIES.map(function (p) {
+      return '<button role="tab" data-primary="' + esc(p.slug) + '" class="' + (state.primary === p.slug ? 'on' : '') + '" aria-selected="' + (state.primary === p.slug) + '">' + esc(p.label) + '</button>';
+    }).join('');
+    nav.onchange = null;
+    nav.onclick = function (e) {
+      var b = e.target.closest && e.target.closest('[data-primary]');
+      if (!b) return;
+      writeHash(b.getAttribute('data-primary'), '', '');
+    };
+    nav.addEventListener('scroll', updateOverflow);
+    setTimeout(updateOverflow, 0);
+    window.addEventListener('resize', updateOverflow);
+  }
+  function renderSub(types) {
+    var sub = el('subbar');
+    var filters = [['', '全部'], ['cute', '可爱风'], ['buzz', '多源热议']];
+    var filt = filters.map(function (f) {
+      return '<button data-filter="' + f[0] + '" class="' + (state.filter === f[0] ? 'on' : '') + '">' + f[1] + '</button>';
+    }).join('');
+    var typeBtns = types.map(function (t) {
+      return '<button data-type="' + esc(t.type) + '" class="' + (state.typ === t.type ? 'on' : '') + '">' + esc(t.label || t.type) + '</button>';
+    }).join('');
+    var narrow = window.matchMedia && window.matchMedia('(max-width: 639px)').matches || inTg;
+    var typeHtml = '';
+    if (types.length) {
+      if (narrow) {
+        typeHtml = '<label class="p-lab">细分 <select id="typeSel" aria-label="细分">' +
+          '<option value="">全部</option>' + types.map(function (t) {
+            return '<option value="' + esc(t.type) + '"' + (state.typ === t.type ? ' selected' : '') + '>' + esc(t.label || t.type) + '</option>';
+          }).join('') + '</select></label>';
+      } else {
+        typeHtml = '<span class="p-lab">细分</span><button data-type="" class="' + (!state.typ ? 'on' : '') + '">全部</button>' + typeBtns;
+      }
+    }
+    sub.innerHTML = '<div class="p-filters">' + filt + '</div>' + (typeHtml ? '<div class="p-types">' + typeHtml + '</div>' : '');
+    sub.onclick = function (e) {
+      var f = e.target.closest && e.target.closest('[data-filter]');
+      var t = e.target.closest && e.target.closest('[data-type]');
+      if (f) writeHash(state.primary, state.typ, f.getAttribute('data-filter') || '');
+      if (t) writeHash(state.primary, t.getAttribute('data-type') || '', state.filter);
+    };
+    var sel = el('typeSel');
+    if (sel) sel.onchange = function () { writeHash(state.primary, sel.value || '', state.filter); };
+  }
+  function renderSuppliers(shard) {
+    var types = arr(shard && shard.types), themes = arr(shard && shard.themes);
+    var primary = PRIMARIES.filter(function (p) { return p.slug === state.primary; })[0] || PRIMARIES[0];
+    renderNav();
+    renderSub(types);
+    var html = '';
+    var ts = types.filter(function (t) { return !state.typ || t.type === state.typ; });
+    var cards = 0;
+    ts.forEach(function (t) {
+      var tops = arr(t.top);
+      if (!tops.length) return;
+      html += '<section class="v-sec"><h2 class="v-sech">' + esc(t.label || t.type) + ' <small>' + tops.length + ' 家</small></h2><div class="s-grid v-grid">';
+      tops.forEach(function (s, i) { html += card(s, i, t.label || t.type); cards++; });
+      html += '</div></section>';
+    });
+    var shownThemes = themes.filter(passFilter);
+    if (shownThemes.length) {
+      html += '<section class="v-sec"><h2 class="v-sech">主题推荐 <small>' + shownThemes.length + ' 个</small></h2><div class="s-grid v-grid">';
+      shownThemes.forEach(function (th) { html += themeCard(th); });
+      html += '</div></section>';
+    }
+    if (!html) html = '<p class="p-empty">本轮没有符合筛选的卡片。新类宁缺毋滥，不为凑数放行。</p>';
+    el('list').innerHTML = html;
+    var shopN = 0;
+    ts.forEach(function (t) { shopN += arr(t.top).length; });
+    var bits = [primary.label];
+    if (types.length) bits.push(types.length + ' 个细分');
+    if (shopN) bits.push(shopN + ' 张厂家卡');
+    if (themes.length) bits.push(themes.length + ' 个主题');
+    if (state.fallback) bits.push('分片暂不可用，已回退旧快照');
+    el('sum').textContent = bits.join(' · ');
+    var stamp = el('stamp');
+    if (stamp) {
+      var pub = (state.index && state.index.generated_at_label) || (state.data && state.data.generated_at_label) || '';
+      var snap = (state.index && state.index.source_snapshot_label) || '2026-11-01 19:20 (UTC+8)';
+      stamp.textContent = '数据发布于 ' + pub + ' · 1688 货源快照：' + snap + ' · 价格以 1688 现页为准';
+    }
+    if (el('notice')) el('notice').textContent = state.notice || (state.fallback ? '该分类分片加载失败，已回退到旧厂家数据，采购入口仍受审核清单约束。' : '');
+    bindExtClicks(document);
+  }
+
   function runSuppliers() {
-    var data = {}, type = '';
-    function obj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
-    function arr(v) { return Array.isArray(v) ? v : []; }
-    function num(v) { return typeof v === 'number' && isFinite(v); }
-    function str(v) { return typeof v === 'string' || num(v) ? String(v) : ''; }
-    function esc(v) { return str(v).replace(/[&<>"']/g, function (c) { return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]; }); }
-    function el(k) { return document.getElementById(k); }
-    function okUrl(u) { return typeof u === 'string' && /^https:\/\/[^\s"]+$/.test(u) ? u : ''; }
-    function yuan(v) { return num(v) ? '¥' + Math.round(v * 100) / 100 : ''; }
-    function range(a, b) { return num(a) ? yuan(a) + (num(b) && b !== a ? '–' + Math.round(b * 100) / 100 : '') : ''; }
-    function iph(m) { m = arr(m); return m.length ? 'iPhone ' + m[0] + (m[1] !== m[0] ? '–' + m[1] : '') : ''; }
-    function offer(o) { return /^\d+$/.test(str(o)) ? 'https://detail.1688.com/offer/' + o + '.html' : ''; }
-    function home(m) { return /^[a-zA-Z0-9_-]+$/.test(str(m)) ? 'https://m.1688.com/winport/' + m + '.html' : ''; }
-    function city(l) { return str(l).replace(/^(广东|浙江|福建|江苏)(省)?/, '').replace(/(市|县)$/, ''); }
-    function a(u, t, cls) { return okUrl(u) ? '<a class="' + cls + '" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + t + '</a>' : ''; }
-    function S() { return obj(obj(data.jh).suppliers); }
-    function buyRow(b, first) {
-      b = obj(b);
-      var im = /^img\/ibank\/[^"'<>]+$/.test(str(b.im)) ? '<img src="https://cbu01.alicdn.com/' + esc(b.im) + '_120x120.jpg" alt="" loading="lazy" referrerpolicy="no-referrer">' : '<span class="v-ph">📱</span>';
-      return '<div class="v-buy' + (first ? ' first' : '') + '">' + im + '<div class="v-bt"><p class="v-btitle">' + esc(b.t) + '</p><p class="v-bp"><b>' + yuan(b.p) + '</b> / 个' + (num(b.q) ? ' · ' + b.q + ' 件起' : '') + '</p></div></div>' +
-        a(offer(b.o), first ? '去 1688 下单' : '下这款', first ? 's-buy' : 'v-buy2');
-    }
-    function card(s, i, label) {
-      var buys = arr(s.buy).map(obj);
-      return '<article class="s-card v-card"><div class="s-body">' +
-        '<div class="v-head"><span class="v-rank">' + (i + 1) + '</span><h2>' + esc(s.shop) + '</h2></div>' +
-        '<p class="v-meta">' + (s.factory ? '<span class="v-tag">工厂</span>' : '') + esc(city(s.loc)) + '发货' + (iph(s.models) ? ' · ' + esc(iph(s.models)) : '') + '</p>' +
-        '<p class="v-what"><b>' + esc(label) + '</b>：' + range(s.pmin, s.pmax) + ' / 个' + (num(s.moq) ? '，' + s.moq + ' 件起批' : '') + '</p>' +
-        '<p class="v-strong">' + esc(arr(s.strong).join(' · ')) + '</p>' +
-        (buys.length ? buyRow(buys[0], true) : '') +
-        (buys[1] ? '<details class="s-other"><summary>这家还有一款</summary>' + buyRow(buys[1], false) + '</details>' : '') +
-        a(home(s.mid), '看厂家店铺 ›', 'v-home') +
-        '</div></article>';
-    }
-    function render() {
-      var ts = arr(S().types).map(obj), shop = obj(S().shop), tn = obj(shop.types);
-      el('sum').textContent = '手机壳 ' + ts.filter(function (t) { return t.group === '壳'; }).length + ' 类、配件 ' + ts.filter(function (t) { return t.group === '配件'; }).length + ' 类，每类挑了最值得进的 1688 厂家，点按钮直接到商品页下单';
-      function chip(v, t) { return '<button data-vtype="' + esc(v) + '" class="' + (type === v ? 'on' : '') + '">' + esc(t) + '</button>'; }
-      el('chips').innerHTML = '<div class="v-row"><span class="v-gl">手机壳</span>' + chip('', '全部') + chip('壳', '全部手机壳') + ts.filter(function (t) { return t.group === '壳'; }).map(function (t) { return chip(t.type, t.label); }).join('') + '</div>' +
-        '<div class="v-row"><span class="v-gl">配件</span>' + chip('配件', '全部配件') + ts.filter(function (t) { return t.group === '配件'; }).map(function (t) { return chip(t.type, t.label); }).join('') + '</div>';
-      el('list').innerHTML = ts.filter(function (t) { return !type || t.type === type || t.group === type; }).map(function (t) {
-        var top = arr(t.top).map(obj);
-        return '<section class="v-sec"><h2 class="v-sech">' + esc(t.label) + '<small>' + (t.mine ? '你店里 ' + t.mine + ' 个 · ' : '') + '比了 ' + (t.cands || 0) + ' 家</small></h2>' +
-          '<div class="s-grid v-grid">' + (top.map(function (s, i) { return card(s, i, t.label); }).join('') || '<p class="s-todo">还没找到合适的厂家</p>') + '</div></section>';
-      }).join('');
-      var ms = arr(shop.models).slice(0, 6).map(function (m) { return str(arr(m)[0]) + ' ' + arr(m)[1]; });
-      el('models').textContent = ms.length ? '店里最多的机型：' + ms.join(' · ') : '';
-    }
-    document.addEventListener('click', function (e) { var t = e.target.closest && e.target.closest('[data-vtype]'); if (t) { type = t.getAttribute('data-vtype'); render(); } });
-    var xhr = new XMLHttpRequest();
-    xhr.open('GET', './data.json?t=' + Date.now(), true); xhr.timeout = 15000;
-    xhr.onload = function () { var d = null; try { d = JSON.parse(xhr.responseText); } catch (e) {} if (xhr.status >= 200 && xhr.status < 300 && d) { data = d; el('notice').textContent = ''; render(); } else el('notice').textContent = '加载失败，刷新再试。'; };
-    xhr.onerror = xhr.ontimeout = function () { el('notice').textContent = '网络不通，刷新再试。'; };
-    xhr.send();
+    var st = parseHash();
+    state.primary = st.primary || 'phone-cases';
+    state.typ = st.typ || '';
+    state.filter = st.filter || '';
+    if (st.invalid) state.notice = '链接无法识别，已回到手机壳。';
+    loadShard(state.primary, function (err, shard) {
+      if (err || !shard) {
+        state.fallback = true;
+        shard = suppliersFromFallback();
+        if (state.primary === 'phone-cases' || state.primary === 'accessories') {
+          shard.types = arr(shard.types).filter(function (t) { return (t.primary || (t.group === '壳' ? 'phone-cases' : 'accessories')) === state.primary; });
+        } else {
+          shard.types = [];
+          shard.themes = [];
+        }
+      }
+      renderSuppliers(shard);
+      syncBackButton();
+    });
   }
-  // ===== v7「按我的店铺进货」：每个图案 / 每个机型×壳型都配 1688 货源 =====
+
+  function boot() {
+    initTelegram();
+    bindExtClicks(document);
+    var st = parseHash();
+    if (st.invalid) {
+      history.replaceState(null, '', '#c/phone-cases');
+      state.notice = '链接无法识别，已回到手机壳。';
+      st = parseHash();
+    }
+    window.addEventListener('hashchange', function () {
+      var n = parseHash();
+      if (n.view === 'suppliers' && document.body.classList.contains('simple') && el('primaries')) {
+        if (n.invalid) { history.replaceState(null, '', '#c/phone-cases'); state.notice = '链接无法识别，已回到手机壳。'; }
+        runSuppliers();
+        return;
+      }
+      location.reload();
+    });
+    loadCore(function (fail) {
+      if (fail) {
+        if (el('sum')) el('sum').textContent = '加载失败，刷新再试。';
+        if (el('notice')) el('notice').textContent = '数据加载失败。';
+        return;
+      }
+      if (st.view === 'designs') {
+        document.title = '按图案找货';
+        document.body.innerHTML = V7_BODY;
+        document.body.className = 'simple';
+        runShop();
+        initTelegram(); bindExtClicks(document); syncBackButton();
+      } else if (st.view && st.view !== 'suppliers') {
+        var link = document.querySelector('link[rel=stylesheet]'); if (link) link.parentNode.removeChild(link);
+        var css = document.createElement('style'); css.textContent = V5_CSS + '\n.back-simple{display:inline-flex;align-items:center;padding:0 12px;height:44px;border-radius:12px;border:1px solid #e0d6c2;background:#fff;color:#2b795f;font-weight:600;text-decoration:none;white-space:nowrap}\n.v-closed{display:inline-block;margin-top:8px;padding:6px 10px;border-radius:10px;background:#f4efe4;color:#8a6a35;font-size:13px}';
+        document.head.appendChild(css);
+        document.title = '更多 · 进货';
+        document.body.className = ''; document.body.innerHTML = V5_BODY;
+        runV5(st.view);
+        initTelegram(); bindExtClicks(document); syncBackButton();
+      } else {
+        runSuppliers();
+      }
+    });
+  }
+
+  // ===== patched v8 helpers used by later views: a() / link() go through the gate =====
+  function a(u, t, cls) { return extLink(u, t, cls); }
+
   function runShop() {
     var data = {}, view = 'd', q = '', model = '', type = '', limit = 40;
     function obj(v) { return v && typeof v === 'object' && !Array.isArray(v) ? v : {}; }
@@ -92,9 +547,8 @@
     function thumb(p) { return typeof p === 'string' && /^thumbs\/[a-zA-Z0-9_-]+\.webp$/.test(p) ? p : ''; }
     function offer(o) { return /^\d+$/.test(str(o)) ? 'https://detail.1688.com/offer/' + o + '.html' : ''; }
     function search(k) { return 'https://m.1688.com/offer_search/-6D7033.html?keywords=' + encodeURIComponent(k); }
-    function okUrl(u) { return typeof u === 'string' && /^https:\/\/[^\s"]+$/.test(u) ? u : ''; }
     function short(m) { return str(m).replace(/\s*pro max/i, 'PM').replace(/\s*pro$/i, 'P').replace(/\s*plus/i, 'Plus').replace(/\s*air/i, 'Air').replace(/\s+/g, ''); }
-    function a(u, t, cls) { return okUrl(u) ? '<a class="' + cls + '" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + t + '</a>' : ''; }
+    function a(u, t, cls) { return extLink(u, t, cls); }
     function D() { return obj(obj(data.jh).designs); }
     function models() { return arr(D().models); }
     var LV = { 1: ['same', '1688 名字对上的款（对比一下图）'], 2: ['like', '1688 相似款，点进去看图确认'], 3: ['style', '没搜到同名款，这是最接近的一家，看图挑'] };
@@ -102,11 +556,11 @@
     function dCard(d) {
       var b = obj(d.b), ms = arr(d.md).map(function (i) { return short(models()[i]); }), lv = LV[b.lv] || null, u = offer(b.o);
       var img = thumb(d.th) ? '<img src="./' + esc(d.th) + '" alt="' + esc(d.n) + '" loading="lazy">' : '<span class="ph">📱</span>';
-      var im = b.im ? '<img class="s-1688img" src="https://cbu01.alicdn.com/' + esc(b.im) + '_120x120.jpg" alt="1688 图" loading="lazy" referrerpolicy="no-referrer">' : '';
+      var im = typeof b.im === 'string' && /^img\/ibank\/[^"'<>]+$/.test(b.im) ? '<img class="s-1688img" src="https://cbu01.alicdn.com/' + esc(b.im) + '_120x120.jpg" alt="1688 图" loading="lazy" referrerpolicy="no-referrer">' : '';
       return '<article class="s-card">' +
         '<div class="s-img">' + img + (d.c === 'acc' ? '<span class="s-badge">配件</span>' : '') + '</div><div class="s-body">' +
         '<h2>' + esc(d.n) + '</h2>' +
-        '<p class="s-mine">店里 ' + d.k + ' 个 · 卖 ' + esc(dollars(d.pr)) + '</p>' +
+        '<p class="s-mine">店里 ' + nint(d.k) + ' 个 · 卖 ' + esc(dollars(d.pr)) + '</p>' +
         (ms.length ? '<p class="s-models">' + esc(ms.slice(0, 6).join(' · ')) + (ms.length > 6 ? ' 等 ' + ms.length + ' 个机型' : '') + '</p>' : '') +
         (u && b.lv !== 3 ? '<div class="s-sup ' + lv[0] + '">' + im + '<div><p class="s-lv">' + esc(lv[1]) + '</p>' +
           '<p class="s-cost">进价 <b>' + yuan(b.p) + '</b> / 个' + (num(b.q) ? '<span>' + b.q + ' 件起批</span>' : '') + '</p>' +
@@ -122,7 +576,7 @@
       var offers = arr(g.offers).map(obj).filter(function (o) { return okUrl(o.u); });
       return '<article class="s-card s-group"><div class="s-body">' +
         '<h2>' + esc(g.model) + ' · ' + esc(g.type ? g.type + '壳' : '壳型没标') + '</h2>' +
-        '<p class="s-mine">店里 ' + g.n + ' 个 · ' + g.nd + ' 个图案 · 卖 ' + esc(dollars([g.pmin, g.pmax])) + '</p>' +
+        '<p class="s-mine">店里 ' + nint(g.n) + ' 个 · ' + nint(g.nd) + ' 个图案 · 卖 ' + esc(dollars([g.pmin, g.pmax])) + '</p>' +
         '<p class="s-models">' + esc(arr(g.designs).slice(0, 5).join('、')) + (g.nd > 5 ? '…' : '') + '</p>' +
         (offers.length ? '<ul class="s-blank">' + offers.map(function (o) {
           return '<li><div><b>' + esc(o.type) + '空壳 ' + yuan(o.cost) + '</b><small>' + (num(o.moq) ? o.moq + ' 件起 · ' : '') + esc(city(o.loc)) + (o.fit ? '' : ' · 标题没写这个机型，下单时选规格确认') + '</small></div>' + a(o.u, '去 1688 下单', 's-buy small') + '</li>';
@@ -144,7 +598,7 @@
     function render() {
       var ds = arr(D().items).map(obj), gs = arr(obj(obj(data.jh).shop).groups).map(obj);
       var found = ds.filter(function (d) { return d.b && d.b.lv !== 3; }).length;
-      el('sum').textContent = '店里 ' + ds.reduce(function (s, d) { return s + (d.k || 0); }, 0) + ' 个商品、' + ds.length + ' 个图案：' + found + ' 个在 1688 找到货，' + (ds.length - found) + ' 个待找';
+      el('sum').textContent = '店里 ' + nint(ds.reduce(function (s, d) { return s + (Number(nint(d.k)) || 0); }, 0)) + ' 个商品、' + nint(ds.length) + ' 个图案：' + nint(found) + ' 个在 1688 找到货，' + nint(ds.length - found) + ' 个待找';
       el('views').innerHTML = [['d', '按图案（成品）'], ['g', '按机型（空壳）']].map(function (v) { return '<button data-view="' + v[0] + '" class="' + (view === v[0] ? 'on' : '') + '">' + v[1] + '</button>'; }).join('');
       var sel = el('model'); if (!sel.options.length) sel.innerHTML = '<option value="">全部机型</option>' + models().map(function (m, i) { return '<option value="' + i + '">' + esc(m) + '</option>'; }).join('');
       el('chips').innerHTML = ['全部', '透明', '镜面', '其他'].map(function (c) { var v = c === '全部' ? '' : c; return '<button data-type="' + v + '" class="' + (type === v ? 'on' : '') + '">' + c + '</button>'; }).join('');
@@ -215,7 +669,7 @@ function runV5(START) {
       return ok ? v : '';
     } catch (e) { return ''; }
   }
-  function link(u, t, cls) { return url(u) ? '<a class="' + (cls || '') + '" href="' + esc(u) + '" target="_blank" rel="noopener noreferrer">' + esc(t || '去看看 ›') + '</a>' : ''; }
+  function link(u, t, cls) { return extLink(u, t, cls); }
   function yuan(v) { return num(v) ? '¥' + String(Math.round(v * 100) / 100) : '暂无'; }
   // Collapses float arithmetic noise to 6 decimals before any display rounding — mirrors review.py's
   // clean(). Without this, the exact same formula (e.g. cost 13.05, sell 32.05, ship 15, kg 0.3 ->
@@ -633,7 +1087,7 @@ function runV5(START) {
     var candidates = signals.filter(function (s) { return s.m !== true && s.tag === '潮流话题候选'; });
     var rest = signals.filter(function (s) { return s.m !== true && s.tag !== '潮流话题候选'; });
     var html = '';
-    if (matched.length) html += '<h3 class="group-title">和追踪商品有关</h3>' + matched.map(function (s) { return signalCard(s, 'match', '关联：' + s.tm); }).join('');
+    if (matched.length) html += '<h3 class="group-title">和追踪商品有关</h3>' + matched.map(function (s) { return signalCard(s, 'match', '关联：' + esc(s.tm)); }).join('');
     if (candidates.length) html += '<h3 class="group-title">可能是新苗头</h3>' + candidates.map(function (s) { return signalCard(s, 'candidate', '新话题'); }).join('');
     if (rest.length) {
       html += '<button class="more-toggle" data-more aria-expanded="false">看更多热搜（' + rest.length + '条） ▾</button><div class="more" hidden>' + rest.map(function (s) { return signalCard(s); }).join('') + '</div>';
@@ -705,7 +1159,7 @@ function runV5(START) {
       '<div class="body"' + (fold ? ' hidden' : '') + '>' +
       '<p class="chips">' + riskChip('物流风险', it.logi) + riskChip('授权风险', it.auth) + '<span class="chip">货源抓取 ' + esc(day(it.at)) + '</span></p>' +
       (it.odd ? '<p class="risk-warning">1688 搜到的多是配件/仿款或价差离谱，倍数不可信，别按这个进。</p>' : '') +
-      '<p class="muted small">卖价来源：' + esc(str(it.sell_src)) + (it.kind === 'case' ? '；倍数只算空壳，未含印图、包装、国际运费' : '') + '。分项：利润 ' + pt.mult + ' · 热度 ' + (num(pt.heat) ? pt.heat : '无') + ' · 供应商 ' + pt.sup + ' · 起订 ' + pt.moq + '</p>' +
+      '<p class="muted small">卖价来源：' + esc(str(it.sell_src)) + (it.kind === 'case' ? '；倍数只算空壳，未含印图、包装、国际运费' : '') + '。分项：利润 ' + nint(pt.mult) + ' · 热度 ' + (num(pt.heat) ? nint(pt.heat) : '无') + ' · 供应商 ' + nint(pt.sup) + ' · 起订 ' + nint(pt.moq) + '</p>' +
       (typeof pk.why === 'string' ? '<p class="sup-pick' + (it.ip ? ' warn' : '') + '">' + esc(pk.why) + '</p>' : '') +
       (num(pk.raw) && num(pk.n) ? '<p class="muted small">从 ' + pk.raw + ' 条 1688 结果里过滤出 ' + pk.n + ' 家合格候选（' + esc(Object.keys(obj(pk.drop)).map(function (k) { return k + ' ' + pk.drop[k]; }).join('、')) + '），按综合分排序；备选见「看其他」。</p>' : '') +
       '<ol class="supplier-list">' + (rows.length ? jhSupplier(best, pi, true, it) : '') + '</ol>' +
@@ -730,10 +1184,10 @@ function runV5(START) {
     var shown = groups.filter(function (g) { return !q || (str(g.model) + ' ' + str(g.type) + ' ' + arr(g.designs).join(' ')).toLowerCase().indexOf(q) >= 0; });
     var types = obj(s.types), tlist = Object.keys(types).map(function (k) { return k + ' ' + types[k]; }).join(' · ');
     var head = '<section class="panel span2 shop-sum"><h2>moomin.vip 在售：' + (num(s.total) ? s.total : '暂无') + ' 件</h2>' +
-      '<p>手机壳 ' + str(s.cases) + ' 件 · 配件 ' + str(s.acc) + ' 件 · 壳型：' + esc(tlist) + '</p>' +
+      '<p>手机壳 ' + nint(s.cases) + ' 件 · 配件 ' + nint(s.acc) + ' 件 · 壳型：' + esc(tlist) + '</p>' +
       '<p class="muted small">在售清单：' + esc(str(s.src)) + '（只读，抓取于 ' + esc(day(s.at)) + '）· 汇率：1 美元 = ¥' + (num(fx.rate) ? Math.round(fx.rate * 1000) / 1000 : '暂无') + '（' + esc(str(fx.src)) + '，' + esc(day(fx.at)) + '；' + esc(str(fx.note)) + '）</p>' +
       '<p class="muted small">' + esc(str(s.note)) + '</p>' +
-      '<p class="muted small">图案级绑定（bindings.json）：' + (s.bindings ? s.bindings + ' 款' : '暂空，飞总填好后按绑定的 1688 链接配货') + '</p></section>';
+      '<p class="muted small">图案级绑定（bindings.json）：' + (s.bindings || s.bindings === 0 ? nint(s.bindings) + ' 款' : '暂空，飞总填好后按绑定的 1688 链接配货') + '</p></section>';
     function groupCard(g) {
       var offers = arr(g.offers).map(obj);
       var rows = offers.map(function (o) {
@@ -741,7 +1195,7 @@ function runV5(START) {
         return '<tr><td>' + esc(str(o.type)) + (o.fit ? '' : '<small title="1688 标题没写这个机型，下单时确认">*</small>') + '</td><td>' + yuan(o.cost) + '</td><td>' + yuan(o.margin) + '</td><td>' + times(o.mult) + '</td><td class="act">' + (k ? qtyBox(k, o.moq) : '') + link(o.u, '去 1688 ›') + '</td></tr>';
       }).join('');
       return '<article class="card shop-g"><div class="shop-head"><h2>' + esc(str(g.model)) + ' · ' + esc(g.type ? g.type + '壳' : '未标壳型') + '</h2><span class="pill tiny ' + (g.how === '绑定' ? 'buy' : 'wait') + '">' + esc(str(g.how)) + '</span></div>' +
-        '<p class="muted small">' + g.n + ' 件 · ' + g.nd + ' 个图案（' + esc(arr(g.designs).slice(0, 4).join('、')) + (g.nd > 4 ? '…' : '') + '）· 售价 ' + usd(g.pmin) + (g.pmax !== g.pmin ? '–' + usd(g.pmax) : '') + '，中位 ' + usd(g.pmed) + '</p>' +
+        '<p class="muted small">' + nint(g.n) + ' 件 · ' + nint(g.nd) + ' 个图案（' + esc(arr(g.designs).slice(0, 4).join('、')) + (Number(nint(g.nd)) > 4 ? '…' : '') + '）· 售价 ' + usd(g.pmin) + (g.pmax !== g.pmin ? '–' + usd(g.pmax) : '') + '，中位 ' + usd(g.pmed) + '</p>' +
         '<table class="otable"><thead><tr><th>1688 壳型</th><th>空壳价</th><th>单件毛利</th><th>倍数</th><th></th></tr></thead><tbody>' + (rows || '<tr><td colspan="5">暂无 1688 货源</td></tr>') + '</tbody></table></article>';
     }
     var top = shown.slice(0, 12), rest = shown.slice(12);
@@ -753,7 +1207,7 @@ function runV5(START) {
     var q = num(c.qty) ? c.qty : 1, p = tierPrice(c.tn, q), low = num(c.moq) && q < c.moq;
     return '<li class="cline"><div class="cl-main"><b>' + esc(c.t) + '</b><small>' + esc(c.src) + (c.loc ? ' · ' + esc(c.loc) + '发货' : '') + ' · 抓取 ' + esc(day(c.at)) + '</small></div>' +
       '<div class="cl-num"><input type="number" min="1" step="1" inputmode="numeric" value="' + q + '" data-cartqty="' + i + '" aria-label="数量"><span>× ' + (p === null ? '单价未取到' : yuan(p)) + ' = <b>' + (p === null ? '—' : yuan(p * q)) + '</b></span></div>' +
-      (low ? '<p class="sup-flag">⚠️ 低于起订量 ' + c.moq + ' 件，1688 可能下不了单</p>' : '') +
+      (low ? '<p class="sup-flag">⚠️ 低于起订量 ' + nint(c.moq) + ' 件，1688 可能下不了单</p>' : '') +
       '<div class="cl-act">' + link(c.u, '去 1688 下单 ›', 'buy-link') + '<button class="link-btn" data-del="' + i + '">删除</button></div></li>';
   }
   function cartGroups() { var g = {}, order = []; cart.forEach(function (c, i) { if (!g[c.shop]) { g[c.shop] = []; order.push(c.shop); } g[c.shop].push(i); }); return order.map(function (s) { return [s, g[s]]; }); }
