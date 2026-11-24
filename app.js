@@ -369,27 +369,131 @@
     if (state.filter === 'buzz') return !!th.buzz && th.ip !== 'blocked';
     return true;
   }
-  function updateOverflow() {
-    var wrap = el('navWrap'), nav = el('primaries');
-    if (!wrap || !nav) return;
-    var max = nav.scrollWidth - nav.clientWidth - 2;
-    wrap.classList.toggle('overflow-right', nav.scrollWidth > nav.clientWidth + 4 && nav.scrollLeft < max);
-    wrap.classList.toggle('overflow-left', nav.scrollLeft > 2);
+  function syncOverflow(track, shell) {
+    if (!track) return;
+    var max = track.scrollWidth - track.clientWidth - 2;
+    var overflow = track.scrollWidth > track.clientWidth + 4;
+    var left = track.scrollLeft > 2;
+    var right = overflow && track.scrollLeft < max;
+    track.classList.toggle('is-overflow-left', left);
+    track.classList.toggle('is-overflow-right', right);
+    if (shell && shell !== track) {
+      shell.classList.toggle('is-overflow-left', left);
+      shell.classList.toggle('is-overflow-right', right);
+    }
   }
+  function updateOverflow() {
+    var wrap = el('navWrap'), nav = el('primaries'), shell = el('navShell');
+    if (!nav) return;
+    syncOverflow(nav, shell || nav);
+    if (wrap) {
+      wrap.classList.toggle('overflow-right', nav.classList.contains('is-overflow-right'));
+      wrap.classList.toggle('overflow-left', nav.classList.contains('is-overflow-left'));
+    }
+    var f = document.querySelector('#subbar .p-filters');
+    var typ = document.querySelector('#subbar .p-types');
+    if (f) syncOverflow(f, f);
+    if (typ && !typ.querySelector('select')) syncOverflow(typ, typ);
+    var chips = el('chips');
+    if (chips) syncOverflow(chips, chips);
+  }
+  function revealActiveNav() {
+    var nav = el('primaries');
+    var b = nav && nav.querySelector('button.on');
+    if (b && b.scrollIntoView) {
+      try { b.scrollIntoView({ inline: 'nearest', block: 'nearest' }); } catch (err) { b.scrollIntoView(); }
+    }
+  }
+  function bindHScroll(track, shell) {
+    if (!track || track.getAttribute('data-hscroll') === '1') {
+      syncOverflow(track, shell);
+      return;
+    }
+    track.setAttribute('data-hscroll', '1');
+    var startX = 0, startLeft = 0, dragging = false, moved = false, ptr = 0;
+    var THRESH = 8;
+    track.addEventListener('scroll', function () { syncOverflow(track, shell); }, { passive: true });
+    track.addEventListener('pointerdown', function (e) {
+      if (e.button !== 0) return;
+      if (e.pointerType === 'touch') return;
+      if (track.scrollWidth <= track.clientWidth + 2) return;
+      if (e.target && e.target.closest && e.target.closest('select, input, textarea, option')) return;
+      startX = e.clientX;
+      startLeft = track.scrollLeft;
+      dragging = true;
+      moved = false;
+      ptr = e.pointerId;
+    });
+    track.addEventListener('pointermove', function (e) {
+      if (!dragging) return;
+      var dx = e.clientX - startX;
+      if (!moved && Math.abs(dx) < THRESH) return;
+      if (!moved) {
+        moved = true;
+        try { track.setPointerCapture(ptr); } catch (err) {}
+        track.classList.add('is-dragging');
+      }
+      track.scrollLeft = startLeft - dx;
+    });
+    function endDrag(e) {
+      if (!dragging) return;
+      dragging = false;
+      track.classList.remove('is-dragging');
+      // Only a completed pointerup after crossing the threshold swallows the click.
+      // pointercancel / pointerleave must not poison the next real click.
+      track._hDragged = !!(moved && e && e.type === 'pointerup');
+      moved = false;
+      try { if (ptr) track.releasePointerCapture(ptr); } catch (err) {}
+    }
+    track.addEventListener('pointerup', endDrag);
+    track.addEventListener('pointercancel', endDrag);
+    track.addEventListener('lostpointercapture', function () {
+      if (dragging) endDrag({ type: 'pointercancel' });
+    });
+    track.addEventListener('click', function (e) {
+      if (track._hDragged) {
+        e.preventDefault();
+        e.stopPropagation();
+        track._hDragged = false;
+      }
+    }, true);
+    track.addEventListener('wheel', function (e) {
+      if (track.scrollWidth <= track.clientWidth + 2) return;
+      var dx = e.deltaX, dy = e.deltaY;
+      if (e.shiftKey && !dx && dy) dx = dy;
+      if (Math.abs(dx) < Math.abs(dy)) dx = dy;
+      if (!dx) return;
+      var prev = track.scrollLeft;
+      var max = track.scrollWidth - track.clientWidth;
+      var next = Math.max(0, Math.min(max, prev + dx));
+      if (next === prev) return;
+      track.scrollLeft = next;
+      e.preventDefault();
+    }, { passive: false });
+    syncOverflow(track, shell);
+  }
+  var navUiBound = false;
   function renderNav() {
     var nav = el('primaries');
+    var shell = el('navShell');
     nav.innerHTML = PRIMARIES.map(function (p) {
       return '<button role="tab" data-primary="' + esc(p.slug) + '" class="' + (state.primary === p.slug ? 'on' : '') + '" aria-selected="' + (state.primary === p.slug) + '">' + esc(p.label) + '</button>';
     }).join('');
     nav.onchange = null;
     nav.onclick = function (e) {
+      if (nav._hDragged) return;
       var b = e.target.closest && e.target.closest('[data-primary]');
       if (!b) return;
       writeHash(b.getAttribute('data-primary'), '', '');
     };
-    nav.addEventListener('scroll', updateOverflow);
-    setTimeout(updateOverflow, 0);
-    window.addEventListener('resize', updateOverflow);
+    if (!navUiBound) {
+      bindHScroll(nav, shell || nav);
+      window.addEventListener('resize', updateOverflow);
+      navUiBound = true;
+    } else {
+      syncOverflow(nav, shell || nav);
+    }
+    setTimeout(function () { updateOverflow(); revealActiveNav(); }, 0);
   }
   function renderSub(types) {
     var sub = el('subbar');
@@ -421,6 +525,11 @@
     };
     var sel = el('typeSel');
     if (sel) sel.onchange = function () { writeHash(state.primary, sel.value || '', state.filter); };
+    var filters = document.querySelector('#subbar .p-filters');
+    var typesEl = document.querySelector('#subbar .p-types');
+    if (filters) bindHScroll(filters, filters);
+    if (typesEl && !typesEl.querySelector('select')) bindHScroll(typesEl, typesEl);
+    setTimeout(updateOverflow, 0);
   }
   function renderSuppliers(shard) {
     var types = arr(shard && shard.types), themes = arr(shard && shard.themes);
@@ -602,6 +711,7 @@
       el('views').innerHTML = [['d', '按图案（成品）'], ['g', '按机型（空壳）']].map(function (v) { return '<button data-view="' + v[0] + '" class="' + (view === v[0] ? 'on' : '') + '">' + v[1] + '</button>'; }).join('');
       var sel = el('model'); if (!sel.options.length) sel.innerHTML = '<option value="">全部机型</option>' + models().map(function (m, i) { return '<option value="' + i + '">' + esc(m) + '</option>'; }).join('');
       el('chips').innerHTML = ['全部', '透明', '镜面', '其他'].map(function (c) { var v = c === '全部' ? '' : c; return '<button data-type="' + v + '" class="' + (type === v ? 'on' : '') + '">' + c + '</button>'; }).join('');
+      if (typeof bindHScroll === 'function') bindHScroll(el('chips'), el('chips'));
       var list = view === 'd' ? ds.filter(passD) : gs.filter(passG);
       el('count').textContent = list.length ? '共 ' + list.length + (view === 'd' ? ' 个图案，店里上架多的排前面' : ' 组机型×壳型') : '';
       el('list').innerHTML = list.slice(0, limit).map(view === 'd' ? dCard : gCard).join('') || '<p class="s-empty">没有符合的，换个机型或关键词试试。</p>';
